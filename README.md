@@ -14,6 +14,7 @@ We assume that event is a triple of (Subject, Action, Object). For example
 # What can be done now
 
  ### News collection and extraction
+
  We have some crawlers written. So you can run
 
  ```python3 spacy_event_extractor.py ```
@@ -22,6 +23,7 @@ We assume that event is a triple of (Subject, Action, Object). For example
  also extract events just after it and put everything to database.
 
  ### Running web-interface
+
  We have a simple web-UI to view and manipulate extracted events. You can start it just
  by running:
 
@@ -32,6 +34,7 @@ We assume that event is a triple of (Subject, Action, Object). For example
 
 
 # Installation
+
 We haven't made an install script yet, so it's all just a sequence of manual operations.
 
 1. **Dependencies**
