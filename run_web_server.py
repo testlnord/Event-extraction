@@ -3,10 +3,11 @@
 import sys
 import logging.config
 import logging
+import os
 
 from daemon.daemon3x import daemon
 
-LOG_PATH = "tmp/web.log"
+LOG_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "web.log")
 
 
 def log_exception(type, value, tb):
@@ -44,7 +45,7 @@ class ExampleServerDaemon(daemon):
             logger.info("Logging initialized. Creating application...")
             sys.excepthook = log_exception
             from web_ui import app
-            app.run(host='0.0.0.0')
+            app.run(host='127.0.0.1', port='9090')
         except Exception as e:
             with open('/tmp/error_file.txt', 'w') as f:
                 import traceback
