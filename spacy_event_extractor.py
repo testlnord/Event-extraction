@@ -24,29 +24,10 @@ class SpacyEventExtractor:
         pass
 
     @staticmethod
-    def _get_tree(root: spacy.tokens.Token, depth: int, good_token: types.LambdaType) -> [spacy.tokens.Token]:
-        if depth == 0:
-            return [root] if good_token(root) else []
-        result = []
-        for child in filter(good_token, root.lefts):
-            result += SpacyEventExtractor._get_tree(child, depth - 1, good_token)
-        result.append(root)
-        for child in filter(good_token, root.rights):
-            result += SpacyEventExtractor._get_tree(child, depth - 1, good_token)
-        return result
-
-    @staticmethod
-    def _get_chunk(token: spacy.tokens.Token) -> (str, spacy.tokens.Token):
-        if token is None:
-            return "", None
-        return " ".join(map(str, SpacyEventExtractor._get_tree(
-            token, 2, lambda tok: tok is token or tok.dep_.endswith("mod") or tok.dep_ == "compound"))), token
-
-    @staticmethod
-    def _have_pronouns(text: spacy.tokens.Doc) -> bool:
+    def _have_pronouns(text: str) -> bool:
         pronouns = ['i', 'you', 'he', 'she', 'they', 'be', 'him', 'her', 'it']
         # 'we' is a good pronoun as it refers to a company
-        return list(filter(lambda s: s.lower() in pronouns, str(text).split())) != []
+        return list(filter(lambda s: s.lower() in pronouns, text.split())) != []
 
     @staticmethod
     def _is_present_simple(verb: spacy.tokens.Token) -> bool:
@@ -66,10 +47,47 @@ class SpacyEventExtractor:
         return verb.orth_.endswith('ing')
 
     @staticmethod
+    def _get_tree(root: spacy.tokens.Token, depth: int, token_filter: types.FunctionType) -> [spacy.tokens.Token]:
+        """Get list of tokens dependent on given root and satisfying given token_filter"""
+        if depth == 0:
+            return [root] if token_filter(root) else []
+
+        result = []
+        # for tokens on the left of the root, whose head is root
+        for child in filter(token_filter, root.lefts):
+            result += SpacyEventExtractor._get_tree(child, depth - 1, token_filter)
+        result.append(root)
+        # for tokens on the right of the root, whose head is root
+        for child in filter(token_filter, root.rights):
+            result += SpacyEventExtractor._get_tree(child, depth - 1, token_filter)
+        return result
+
+    @staticmethod
+    def _get_chunk(token: spacy.tokens.Token) -> str:
+        """Get string representation of a chunk.
+        Chunk is one or more tokens that forms semantic unit.
+        For example, compound tokens or tokens with dependent tokens."""
+
+        if token is None:
+            return ""
+
+        def token_filter(tok):
+            """True for various modifiers of tok and compound tokens, which include tok"""
+            return tok is token or \
+                   tok.dep_.endswith("mod") or \
+                   tok.dep_ == "compound"
+
+        tree = SpacyEventExtractor._get_tree(root=token, depth=2, token_filter=token_filter)
+        return " ".join(map(str, tree))
+
+    @staticmethod
     def _get_prep_with_word(token: spacy.tokens.Token) -> (str, spacy.tokens.Token):
+        """Get prepositional modifiers of the token and important perposition's child"""
         if token is None:
             return "", None
+
         prep = None
+        # search of prepositions
         for child in token.rights:
             if child.dep_ == "prep":
                 prep = child
@@ -78,115 +96,151 @@ class SpacyEventExtractor:
             return "", None
 
         for word in prep.children:
+            # if preposition has child of type 'object of preposition' or 'complement of a preposition'
+            # then add it to the result
             if word.dep_ in ["pobj", "pcomp"]:
-                chunk_str, chunk_head = SpacyEventExtractor._get_chunk(word)
-                return str(prep) + " " + chunk_str, chunk_head
+                chunk_str = SpacyEventExtractor._get_chunk(word)
+                return str(prep) + " " + chunk_str, word
 
         return "", None
+
+    @staticmethod
+    def _get_full_entity(entity: spacy.tokens.Token) -> str:
+        """Get entity token with all related tokens (i.e. prepositional modifiers)
+        so, we are extracting such token tree with entity
+        entity
+            mod & compound
+                mod & compound
+            prep
+                pobj | pcomp
+                    mod & compound
+                        mod & compound
+                    (repeat)
+                    prep
+                        pobj | pcomp
+                            mod & compound
+                                mod & compound
+                            (repeat)
+                            ...
+        """
+        entity_string = SpacyEventExtractor._get_chunk(entity)
+
+        word = entity
+        while True:
+            prep, word = SpacyEventExtractor._get_prep_with_word(word)
+            if word is None:
+                break
+            entity_string += " " + prep
+        return entity_string
+
+    @staticmethod
+    def _replace_we(replace_we, string):
+        """Replace pronoun 'we' in string with string 'replace_we'"""
+        new_string = ""
+        for word in string.split():
+            if word == "we" and replace_we is not None:
+                new_string += replace_we + " "
+            elif word == "We" and replace_we is not None:
+                new_string += replace_we.capitalize() + " "
+            else:
+                new_string += str(word) + " "
+        return new_string
 
     @staticmethod
     def _remove_extra_whitespaces(text):
         return ' '.join(text.strip().split())
 
     @staticmethod
+    def _get_entity1(span):
+        """Get nominal subject of the span's root, if there is one"""
+        for word in span:
+            if word.head is word: # main verb
+                for child in word.children:
+                    if child.dep_.endswith("nsubj"):
+                        return child
+                break
+        return None
+
+    @staticmethod
+    def _get_action(verb):
+        """Get auxiliary verbs of the given verb and the verb itself"""
+        aux_verbs = ""
+        for child in verb.children:
+            if child.dep_ == "aux" or child.dep_ == "neg":
+                aux_verbs += str(child)
+        return SpacyEventExtractor._remove_extra_whitespaces(str(aux_verbs) + ' ' + str(verb))
+
+    @staticmethod
+    def _get_entity2(verb):
+        """Get direct object of the given verb, if there is one"""
+        for child in verb.children:
+            if child.dep_ == "dobj":
+                return child
+        return None
+
+    @staticmethod
     def extract(text: str, replace_we: str = None) -> [Event]:
-        text = ' '.join(text.split())  # remove any extra whitespaces
+
+        # just because sometimes spaCy fails on sth like we've
         for aux, replace_with in [('ve', 'have'), ('re', 'are')]:
             text = text.replace("'" + aux, " " + replace_with).replace("’" + aux, " " + replace_with)
-            # just because sometimes spaCy fails on sth like we've
 
+        # replacing known_phrases
         for abbr, full in SpacyEventExtractor._known_phrases:
             reg = re.compile(abbr, re.IGNORECASE)
             text = reg.sub(full, text)
-        events = []
-        text = text.strip()
+
         if len(text) == 0:
             return []
-        text_doc = SpacyEventExtractor._nlp(text)
-        sentences = []
-        for sentence in text_doc.sents:  # actually we need to split on sentences twice because sometimes spaCy cannot
-            #  split correctly a long sentence
-            doc = SpacyEventExtractor._nlp(str(sentence))
-            sentences += [str(s) for s in doc.sents]
-        for sentence in sentences:
-            sentence = sentence.strip()
-            doc = SpacyEventExtractor._nlp(sentence)
 
-            if len(set([word.string.strip().lower() for word in doc]) & set(SpacyEventExtractor._keywords)) == 0:
+        text_doc = SpacyEventExtractor._nlp(text)
+
+        events = []
+        keywords_set = set(SpacyEventExtractor._keywords)
+        for doc in text_doc.sents:
+            # if there is no at least one keyword - we ignore that sentence
+            if len(set([word.string.strip().lower() for word in doc]) & keywords_set) == 0:
                 continue
 
-            entity1 = None
-            for word in doc:
-                if word.head is word:  # main verb
-                    for child in word.children:
-                        if child.dep_.endswith("nsubj"):
-                            entity1 = child
-                            break
-                    break
-            if entity1 is None:
+            entity1 = SpacyEventExtractor._get_entity1(doc)
+            if not entity1:
                 continue
             verb = entity1.head
-            aux_verbs = ""
-            for child in verb.children:
-                if child.dep_ == "aux" or child.dep_ == "neg":
-                    aux_verbs += str(child)
+            entity2 = SpacyEventExtractor._get_entity2(verb)
 
-            entity2 = None
-            for child in verb.children:
-                if child.dep_ == "dobj":
-                    entity2 = child
-                    break
+            if SpacyEventExtractor._is_present_simple(verb) or \
+                    SpacyEventExtractor._is_present_continuous(verb):
+                continue
 
-            entity1_string, entity1 = SpacyEventExtractor._get_chunk(entity1)
-            entity2_string, entity2 = SpacyEventExtractor._get_chunk(entity2)
-            entities = []
-            for entity, entity_string in [(entity1, entity1_string), (entity2, entity2_string)]:
-                entity = SpacyEventExtractor._get_prep_with_word(entity)
-                while entity[1] is not None:
-                    entity_string += " " + entity[0]
-                    entity = SpacyEventExtractor._get_prep_with_word(entity[1])
-                entities.append(entity_string)
-            entity1_string, entity2_string = entities
-            keywords_set = set(SpacyEventExtractor._keywords)
+            entity1_string = SpacyEventExtractor._get_full_entity(entity1)
+            entity2_string = SpacyEventExtractor._get_full_entity(entity2)
+
+            entity1_string = SpacyEventExtractor._replace_we(replace_we, entity1_string)
+            entity2_string = SpacyEventExtractor._replace_we(replace_we, entity2_string)
+
+            entity1_string = SpacyEventExtractor._remove_extra_whitespaces(entity1_string)
+            entity2_string = SpacyEventExtractor._remove_extra_whitespaces(entity2_string)
+
+            # if there is no keywords in token and subj_string
             if len(set([word.strip().lower() for word in entity1_string.split()]) & keywords_set) + \
                     len(set(word.strip().lower() for word in entity2_string.split()) & keywords_set) == 0:
-                continue  # there is no keywords in token and subj_string
+                continue
 
             if SpacyEventExtractor._have_pronouns(entity1_string) or \
                     SpacyEventExtractor._have_pronouns(entity2_string):
                 continue
 
-            if SpacyEventExtractor._is_present_simple(verb) or SpacyEventExtractor._is_present_continuous(verb):
+            # entity2 can be empty only in some special cases like: IDEA 2.0 released
+            if verb.lemma_.lower() not in SpacyEventExtractor._important_actions and entity2_string == "":
                 continue
 
-            entities_strings = []
-            for string in [entity1_string, entity2_string]:
-                new_string = ""
-                for word in string.split():
-                    if word == "we" and replace_we is not None:
-                        new_string += replace_we + " "
-                    elif word == "We" and replace_we is not None:
-                        new_string += replace_we.capitalize() + " "
-                    else:
-                        new_string += str(word) + " "
-                entities_strings.append(new_string)
-            entity1_string, entity2_string = entities_strings
+            action_string = SpacyEventExtractor._get_action(verb)
+            event = Event(entity1_string, entity2_string, action_string, str(doc))
+            events.append(event)
 
-            if verb.lemma_.lower() not in SpacyEventExtractor._important_actions and entity2_string == "":
-                continue  # Entity2 can be empty only in some special cases like: IDEA 2.0 released
-            entity1_string = SpacyEventExtractor._remove_extra_whitespaces(entity1_string)
-            entity2_string = SpacyEventExtractor._remove_extra_whitespaces(entity2_string)
-            action_string = SpacyEventExtractor._remove_extra_whitespaces(str(aux_verbs) + ' ' + str(verb))
-            events.append(Event(entity1_string, entity2_string, action_string, str(sentence)))
-
-            print(sentence)
-            print('Object: ', entity1_string)
-            print('Action: ', action_string)
-            print('Subject: ', entity2_string)
-            print("=======")
+            print(event)
 
         return events
-
 
 def main():
     db_handler = DatabaseHandler()
@@ -199,6 +253,8 @@ def main():
         db_handler.cursor.execute("DELETE FROM events")
         db_handler.connection.commit()
 
+    # simply downloading articles to database
+    # todo: remove hardcoded number of articles
     for downloader in article_downloaders:
         try:
             for article in islice(downloader.get_articles(), 0, 1000):
