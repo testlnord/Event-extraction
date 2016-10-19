@@ -1,0 +1,94 @@
+1     Google will be dropping its own implementation of Java¿s APIs in Android N in favour of the open-source OpenJDK.
+Google|willbe dropping|own implementation of Java¿s APIs
+2     
+
+3     Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program.
+Microsoft|has released|new mobile version of Windows 10
+4     Microsoft has announced a new pricing model for its Visual Studio platform.
+Microsoft|has announced|new pricing model for Visual Studio platform
+5     
+
+6     
+
+7     
+
+8     Microsoft has updated Visual Studio Taco (Tools for Apache Cordova), keying in on error-reporting and project-template improvements.
+Microsoft|has updated|
+9     Microsoft has announced a new pricing model for its Visual Studio platform.
+Microsoft|has announced|new pricing model for Visual Studio platform
+10    
+
+11    
+
+12    
+
+13    The Ruby on Rails team released versions 4.2.5.1, 4.1.14.1, and 3.2.22.1 of the framework last week to address multiple issues in Rails and rails-html-sanitizer, a Ruby gem that sanitizes HTML input.
+Ruby|released|versions
+14    Ruby on Rails fixed six vulnerabilities in versions 3.x, 4.1.x, 4.2.x, and Rails 5.0 beta and three in rails-html-sanitizer
+Ruby|fixed|six vulnerabilities in versions
+15    
+
+16    
+
+17    
+
+18    Node.js Foundation just released v.4 of it¿s popular platform ¿ containing the latest version of Javascript¿s V8 engine + support for all ARM processors.
+Node.js Foundation|released|v.4 of it¿s popular platform
+19    
+
+20    
+
+21    
+
+22    
+
+23    In addition, Microsoft updated the Azure software development kit, so engineers can now use PowerShell¿and a cross-platform command-line utility¿to execute commands in an Azure Stack environment in addition to Microsoft's public cloud.
+Microsoft|updated|Azure software development kit
+24    
+
+25    Microsoft officially launched Windows 10 yesterday, with the new OS rolling-out automatically to Windows 8 and 7 users who have registered.
+Microsoft|launched|Windows 10
+26    The Visual Studio Code lightweight editor now supports Apache Cordova, Microsoft has announced.
+Microsoft|has announced|
+27    Microsoft will pay around $250 million to acquire SwiftKey, the company behind a popular keyboard for iOS and Android, according to a report in the Financial Times Tuesday .
+Microsoft|will pay|around $ 250 million
+28    Microsoft has rolled-out a starter kit aimed at getting IoT developers on-board with Windows 10.
+Microsoft|has rolled|starter kit
+29    Microsoft released Windows 10 version 1511 build 10586.104, cumulative update 9 for version 1511, shipped as Windows Update KB 3135173.
+Microsoft|released|Windows
+30    
+
+31    Microsoft announced a partnership with Cyanogen last April to pre-install its Office app suite onto the popular Android mod.
+Microsoft|announced|partnership last April with Cyanogen
+32    
+
+33    Microsoft released its second batch of security updates for this year, addressing a total of 36 flaws in Internet Explorer, Edge, Office, Windows and .Net Framework.
+Microsoft|released|second batch of security updates
+34    
+
+35    
+
+36    Microsoft has announced a new initiative designed to get enterprises using Windows 10 devices.
+Microsoft|has announced|new initiative
+37    IOS 9.1 will support the newly announced iPad Pro¿s 12.9 inch display, reportedly with features such as split-screen view, picture-in-picture video and new emoji (although detailed release notes are currently unavailable).
+IOS 9.1|will support|newly announced iPad Pro¿s 12.9 inch display
+38    
+
+39    Google also announced improved CocoaPods support, making it easier to configure Play game services in Xcode.
+Google|announced|improved CocoaPods support
+40    Google also added a new chart creation tool to Player Analytics and updated its C++, iOS SDKs and Unity plug-in to support the Player Analytics API.
+Google|added|new chart creation tool
+41    
+
+42    Google will be dropping its own implementation of Java¿s APIs in Android N in favour of the open-source OpenJDK.
+Google|willbe dropping|own implementation of Java¿s APIs
+43    Google has updated the API for Google Maps and Android Wear, allowing better navigation features for its wearable products.
+Google|has updated|API
+44    
+
+45    Apple has launched a new app for Android that helps users transition over to iOS devices.
+Apple|has launched|new app for Android
+46    
+
+47    Google has released Android Wear for iOS, allowing Android Wear users to pair their wearables with iPhones running iOS 8.2+.
+Google|has released|Android Wear
