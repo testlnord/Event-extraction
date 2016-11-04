@@ -1,11 +1,6 @@
+import numpy as np
 import json
 from event import Event
-
-
-def parse_extractions(file):
-    with open(file, 'r') as f:
-        for line in f.readlines():
-            yield json.loads(line)
 
 
 class EventOffsets(Event):
@@ -28,6 +23,12 @@ class EventOffsets(Event):
     @property
     def offsets(self):
         return self.entity1_offsets + self.action_offsets + self.entity2_offsets
+
+
+def parse_extractions(file):
+    with open(file, 'r') as f:
+        for line in f.readlines():
+            yield json.loads(line)
 
 
 # todo: parse TIME, LOCATION and use context and confidence
@@ -67,12 +68,21 @@ def to_events(parsed_json):
 
 
 def event_parser_generator(path):
+    """Yields all extracted pairs of (confidence, event)"""
     for parsed in parse_extractions(path):
         for confidence, event in to_events(parsed):
             yield confidence, event
 
 
-# same as event_parser_generator, for convenience
+def event_parser_max_confidence_generator(path):
+    """Yields pairs of (confidence, event) with only max confidence between all events from one events"""
+    for parsed in parse_extractions(path):
+        batch = list(to_events(parsed))
+        max_conf = np.argmax(map(lambda x: x[0], batch))
+        yield batch[max_conf]
+
+
+# same as event_parser_generator, for convenient testing
 def parse_and_output_json_events(path):
     sent = 0
     for parsed in parse_extractions(path):
@@ -82,17 +92,13 @@ def parse_and_output_json_events(path):
         for confidence, event in to_events(parsed):
             extr += 1
             print("{}.{}; confidence={}".format(sent, extr, confidence))
-            print(event.offsets)
+            print(event)
             # print(str.replace(str(event), "'", "’"))
-
-
-# todo: analyze dep trees patterns formed by these extractions
-def count_patterns(events, nlp):
-    for ev in events:
-        sent = nlp(events.sentence)
-    pass
 
 
 if __name__ == "__main__":
     input_path = "samples-json-relations.txt"
-    parse_and_output_json_events(input_path)
+    # parse_and_output_json_events(input_path)
+    for i, (c, e) in enumerate(event_parser_max_confidence_generator(input_path)):
+        print(i, c, repr(e))
+
