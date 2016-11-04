@@ -6,7 +6,6 @@ Adobe has also released version 21.0.0.176 of AIR Desktop Runtime, AIR SDK, AIR 
 Beginning with iOS 8, iPhones, iPads, and iPad Touches are encrypted using a key derived from the user-selected passcode.
 Yesterday, Microsoft capitulated and  started publishing changelogs  and  release information  for Windows 10 patches.
 Microsoft has updated Visual Studio Taco (Tools for Apache Cordova), keying in on error-reporting and project-template improvements.
-Microsoft has announced a new pricing model for its Visual Studio platform.
 An anonymous reader writes:  Ubuntu 16.04 LTS and newer will  no longer be supporting AMD's widely-used Catalyst Linux (fglrx) driver .
 China’s Tencent has pulled out of Windows Phone development and has criticised Microsoft’s commitment to the platform.
 Apple's  trendy Swift language  is getting a Web framework inspired by the popular  Ruby on Rails  MVC framework.
@@ -39,7 +38,6 @@ Apple continues to fight the FBI  over a request to create a bypass mechanism fo
 Google also announced improved CocoaPods support, making it easier to configure Play game services in Xcode.
 Google also added a new chart creation tool to Player Analytics and updated its C++, iOS SDKs and Unity plug-in to support the Player Analytics API.
 Google says it will also continue to support the OpenGL ES standard on Android and will provide an “excellent developer experience no matter which API you choose.”
-Google will be dropping its own implementation of Java’s APIs in Android N in favour of the open-source OpenJDK.
 Google has updated the API for Google Maps and Android Wear, allowing better navigation features for its wearable products.
 Facebook has released an Android version of React Native, its open source project for compiling cross platform apps written in JavaScript.
 Apple has launched a new app for Android that helps users transition over to iOS devices.
