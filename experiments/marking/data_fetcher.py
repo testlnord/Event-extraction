@@ -1,16 +1,7 @@
 import logging as log
-from itertools import islice
-import numpy as np
-from spacy.en import English
-from spacy.tokens import Span
 
 from db.db_handler import DatabaseHandler
 from data_mining.downloaders import article_downloaders
-from data_mining.downloaders import blogs_parser, developerandeconomics, infoworld, itnews, slashdot
-
-from experiments.marking.preprocessor import *
-from experiments.marking.tagger import *
-from experiments.marking.encoder import *
 
 
 # todo: handle incorrect downloader behaviour
@@ -90,37 +81,12 @@ class ArticleTextFetch:
         return tuple(t)
 
 
+class FileLineFetcher:
+    def __init__(self, path):
+        self.path = path
 
-def test():
-    downloaders = [
-        #blogs_parser.BlogsDownloader,
-        #developerandeconomics.DevAndEconomicsDownloader,
-        infoworld.InfoworldDownloader,
-        #itnews.ItNewsDownloader,
-        slashdot.SlashdotDownloader,
-    ]
-    nlp = English()
-    log.info('Loaded spacy')
-    raw_tags = (0, 1)
+    def get(self):
+        with open(self.path) as f:
+            for line in f.readlines():
+                yield line
 
-    data_fetcher = ArticleTextFetch(downloaders=downloaders)
-    preprocessor = PreprocessTexts(nlp)
-    tags = CategoricalTags(raw_tags)
-    tagger = DummyTagger(tags)
-    encoder = PaddingEncoder(nlp, tags, 30)
-
-    # neat usage
-    data_generator = encoder(tagger(preprocessor(data_fetcher.test_get())))
-    for x, y, sw in data_generator:
-        print(np.shape(x), y, sw)
-
-    # another example of usage
-    # for texts in data_fetcher.test_get():
-    #     for sent in preprocessor.sents(texts):
-    #         for sent, tag in tagger.tag(sent):
-    #             for x, y, sw in encoder((sent, tag)):
-    #                 print(np.shape(x), y, sw)
-
-if __name__ == '__main__':
-    log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    test()
