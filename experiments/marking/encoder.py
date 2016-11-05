@@ -1,6 +1,6 @@
 import logging as log
 import numpy as np
-from spacy.tokens import Span
+from spacy.tokens import Span, Token
 from experiments.marking.tagger import Tags
 
 
@@ -21,12 +21,17 @@ class Encoder:
         return np.array(text_encoded), np.array(tag_encoded), np.array(sample_weights)
 
     def encode_text(self, text: Span):
-        text_encoded = [tok.vector for tok in text]
+        text_encoded = [self._check_and_get_vector(tok) for tok in text]
         sample_weights = [1] * len(text_encoded)
         return text_encoded, sample_weights
 
     def encode_tag(self, raw_tag):
         return self.tags.encode(raw_tag)
+
+    def _check_and_get_vector(self, token: Token):
+        if not token.has_vector:
+            log.info('Encoder: word "{}" has no embedding (all zeros)!'.format(str(token)))
+        return token.vector
 
 
 class PaddingEncoder(Encoder):
