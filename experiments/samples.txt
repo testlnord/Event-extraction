@@ -1,5 +1,5 @@
-Google will be dropping its own implementation of Java’s APIs in Android N in favour of the open-source OpenJDK.
-Version 1.0 of JetBrains’ Kotlin programmatic language is now available for JVM and Android developers.
+Google will be dropping its own implementation of Java's APIs in Android N in favour of the open-source OpenJDK.
+Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers.
 Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program.
 Microsoft has announced a new pricing model for its Visual Studio platform.
 Adobe has also released version 21.0.0.176 of AIR Desktop Runtime, AIR SDK, AIR SDK & Compiler and AIR for Android, which contain Flash Player components.
@@ -7,14 +7,14 @@ Beginning with iOS 8, iPhones, iPads, and iPad Touches are encrypted using a key
 Yesterday, Microsoft capitulated and  started publishing changelogs  and  release information  for Windows 10 patches.
 Microsoft has updated Visual Studio Taco (Tools for Apache Cordova), keying in on error-reporting and project-template improvements.
 An anonymous reader writes:  Ubuntu 16.04 LTS and newer will  no longer be supporting AMD's widely-used Catalyst Linux (fglrx) driver .
-China’s Tencent has pulled out of Windows Phone development and has criticised Microsoft’s commitment to the platform.
+China's Tencent has pulled out of Windows Phone development and has criticised Microsoft's commitment to the platform.
 Apple's  trendy Swift language  is getting a Web framework inspired by the popular  Ruby on Rails  MVC framework.
 The Ruby on Rails team released versions 4.2.5.1, 4.1.14.1, and 3.2.22.1 of the framework last week to address multiple issues in Rails and rails-html-sanitizer, a Ruby gem that sanitizes HTML input.
 Ruby on Rails fixed six vulnerabilities in versions 3.x, 4.1.x, 4.2.x, and Rails 5.0 beta and three in rails-html-sanitizer
 PyPy applications can now be embedded within a C program, allowing developers to use both C and Python, regardless of which language they're most comfortable with.
 PyPy 5.0 also has an upgraded C-level API so that Python scripts using C components (for example, by way of  Cython ) are both more compatible and faster.
 Objective C has fallen out of the top ten most popular coding languages for the first time in five years, according to the Tiobe index.
-Node.js Foundation just released v.4 of it’s popular platform – containing the latest version of Javascript’s V8 engine + support for all ARM processors.
+Node.js Foundation just released v.4 of it's popular platform – containing the latest version of Javascript's V8 engine + support for all ARM processors.
 The Node.js Foundation, which has jurisdiction over the popular server-side JavaScript platform, is adding  the Express MVC Web framework for Node.js  as an incubation project, to ensure its continued viability.
 After a long wait, Microsoft is giving Windows Insiders some  major new features  to play around with, after spending the past couple of months primarily making back-end improvements to its new operating system.
 In 2014, Mozilla set up  a virtual reality Web site, MozVR,  functioning with iOS and Android devices, Google Cardboard-compatible headsets, and the Oculus Rift headset.
@@ -33,7 +33,7 @@ Microsoft released its second batch of security updates for this year, addressin
 Microsoft is launching its SQL Server Stretch Database Service Wednesday, along with the first release candidate beta of SQL Server 2016.
 Today the company announces that it is  bringing SQL Server to Linux .
 Microsoft has announced a new initiative designed to get enterprises using Windows 10 devices.
-IOS 9.1 will support the newly announced iPad Pro’s 12.9 inch display, reportedly with features such as split-screen view, picture-in-picture video and new emoji (although detailed release notes are currently unavailable).
+IOS 9.1 will support the newly announced iPad Pro's 12.9 inch display, reportedly with features such as split-screen view, picture-in-picture video and new emoji (although detailed release notes are currently unavailable).
 Apple continues to fight the FBI  over a request to create a bypass mechanism for iOS to let the government access the local contents of a dead terrorist's iPhone.
 Google also announced improved CocoaPods support, making it easier to configure Play game services in Xcode.
 Google also added a new chart creation tool to Player Analytics and updated its C++, iOS SDKs and Unity plug-in to support the Player Analytics API.
@@ -41,5 +41,5 @@ Google says it will also continue to support the OpenGL ES standard on Android a
 Google has updated the API for Google Maps and Android Wear, allowing better navigation features for its wearable products.
 Facebook has released an Android version of React Native, its open source project for compiling cross platform apps written in JavaScript.
 Apple has launched a new app for Android that helps users transition over to iOS devices.
-Parse has announced it’s open-sourced its software development kits for iOS, Android and OS X. Parse says by open sourcing developers can better see how its code interacts with their apps, running on Parse’s MBaaS platform.
+Parse has announced it's open-sourced its software development kits for iOS, Android and OS X. Parse says by open sourcing developers can better see how its code interacts with their apps, running on Parse's MBaaS platform.
 Google has released Android Wear for iOS, allowing Android Wear users to pair their wearables with iPhones running iOS 8.2+.
