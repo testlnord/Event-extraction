@@ -3,13 +3,13 @@ import numpy as np
 from spacy.en import English
 from spacy.tokens import Span
 
-from db.db_handler import DatabaseHandler
 from data_mining.downloaders import article_downloaders
 from data_mining.downloaders import blogs_parser, developerandeconomics, infoworld, itnews, slashdot
 
 from experiments.marking.data_fetcher import *
 from experiments.marking.preprocessor import *
 from experiments.marking.tagger import *
+from experiments.marking.tags import *
 from experiments.marking.encoder import *
 
 
@@ -34,8 +34,8 @@ def test_tagger_events():
 
     # encoder = PaddingEncoder(nlp, tags, 30)
     encoder = Encoder(nlp, tags)
-    tagger1 = HeuristicTagger(tags, nlp)
-    tagger2 = DummyTagger(tags)
+    tagger1 = HeuristicEventTagger(tags, nlp)
+    tagger2 = DummyTagger(tags, '1')
     tagger = ChainTagger(tags)
     tagger.add_tagger(tagger1)
     tagger.add_tagger(tagger2)
@@ -58,8 +58,8 @@ def test_tagger_texts(path='..samples.txt'):
     data_fetcher = FileSents(path, nlp)
     # encoder = PaddingEncoder(nlp, tags, 30)
     suspicious_ne_types=('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT')
-    tagger1 = HeuristicTagger(tags, nlp, suspicious_ne_types=suspicious_ne_types)
-    tagger2 = DummyTagger(tags)
+    tagger1 = HeuristicSpanTagger(tags, nlp, suspicious_ne_types=suspicious_ne_types)
+    tagger2 = DummyTagger(tags, '1')
     tagger = ChainTagger(tags)
     tagger.add_tagger(tagger1)
     tagger.add_tagger(tagger2)
@@ -143,5 +143,5 @@ def test_articles():
 
 
 if __name__ == '__main__':
-    log.basicConfig(format='%(levelname)s:%(message)s', level=log.INFO)
+    log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
     test_tagger_texts('../samples.txt')
