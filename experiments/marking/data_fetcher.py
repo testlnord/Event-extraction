@@ -90,3 +90,12 @@ class FileLineFetcher:
             for line in f.readlines():
                 yield line
 
+class FileSents:
+    def __init__(self, path, nlp):
+        self.path = path
+        self.nlp = nlp
+
+    def get(self):
+        with open(self.path) as f:
+            for sent in self.nlp(f.read()).sents:
+                yield sent

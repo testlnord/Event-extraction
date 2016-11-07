@@ -1,7 +1,7 @@
 import logging as log
 import numpy as np
 from spacy.tokens import Span, Token
-from experiments.marking.tagger import Tags
+from experiments.marking.tags import Tags
 
 
 class Encoder:
@@ -10,26 +10,31 @@ class Encoder:
         self.tags = tags
 
     def __call__(self, text_tag_pairs):
+        """Accepts iterable of pairs (text: Span, raw_tag)
+         and transforms them in the form suitable for machine learning algorithms"""
         for text, tag in text_tag_pairs:
-            # if tag is None then ignore
+            # if tag is None then ignore that pair
             if tag:
                 yield self.encode(text, tag)
 
     def encode(self, text: Span, raw_tag) -> (np.ndarray, np.ndarray, np.ndarray):
+        """Encodes single pair of (text: Span, raw_tag).
+        Also returns mask, representing actual values (non-zero) in returned encoded text."""
         text_encoded, sample_weights = self.encode_text(text)
         tag_encoded = self.encode_tag(raw_tag)
         return np.array(text_encoded), np.array(tag_encoded), np.array(sample_weights)
 
     def encode_text(self, text: Span):
-        text_encoded = [self._check_and_get_vector(tok) for tok in text]
+        # text_encoded = [self._check_and_get_vector(tok) for tok in text]
+        text_encoded = [tok.vector for tok in text]
         sample_weights = [1] * len(text_encoded)
         return text_encoded, sample_weights
 
     def encode_tag(self, raw_tag):
         return self.tags.encode(raw_tag)
 
-    def _check_and_get_vector(self, token: Token):
-        if not token.has_vector:
+    def _check_and_get_vector(self, token):
+        if not (token.like_num or token.is_punct or token.is_space or token.has_vector):
             log.info('Encoder: word "{}" has no embedding (all zeros)!'.format(str(token)))
         return token.vector
 
