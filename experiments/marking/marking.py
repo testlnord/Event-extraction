@@ -28,7 +28,7 @@ def test_tagger_events():
     tags = CategoricalTags(raw_tags)
 
     # testing OpenIE
-    data_fetcher = FileLineFetcher('../samples-json-relations.txt')
+    data_fetcher = FileLineFetcher('../samples-json-relations.txt', nlp)
     preprocessor = PreprocessJsonOpenIEExtractions(nlp, nb_most_confident=1)
     wrapper = EventToSpanWrapper(nlp)
 
@@ -41,7 +41,7 @@ def test_tagger_events():
     tagger.add_tagger(tagger2)
 
     try:
-        data_generator = tagger(preprocessor(data_fetcher.get()))
+        data_generator = tagger(preprocessor(data_fetcher.get_raw_lines()))
         for event, tag in data_generator:
             print(tag, event.sentence)
 
@@ -49,31 +49,39 @@ def test_tagger_events():
         log.info('Keyboard Interrupt happened. Exiting.')
         exit(0)
 
-def test_tagger_texts(path='..samples.txt'):
+def test_tagger_texts():
     nlp = English()
     log.info('Loaded spacy')
     raw_tags = (0, 1)
     tags = CategoricalTags(raw_tags)
 
-    data_fetcher = FileSents(path, nlp)
-    # encoder = PaddingEncoder(nlp, tags, 30)
+    drop_file = open('../untagged_last.txt', 'a')
+    data1 = FilesFetcher.get_texts_from_files(['../texts.txt'])
+    data2 = FilesFetcher.get_texts_from_filetree('/media/Documents/datasets/OANC-GrAF')
+    preprocessor = PreprocessTexts(nlp, min_words_in_sentence=3)
+    # encoder = PaddingEncoder(nlp, tags, 50)
+
     suspicious_ne_types=('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT')
     tagger1 = HeuristicSpanTagger(tags, nlp, suspicious_ne_types=suspicious_ne_types)
-    tagger2 = DummyTagger(tags, '1')
+    tagger2 = DummyTagger(tags, None)
     tagger = ChainTagger(tags)
     tagger.add_tagger(tagger1)
     tagger.add_tagger(tagger2)
 
     try:
-        data_generator = tagger(data_fetcher.get())
+        data_generator = tagger(preprocessor(data2))
         zeros = 0
         total = 0
-        for i, (sent, tag) in enumerate(data_generator):
-            print(i, ':', tag, sent)
-            total = i
-            if str(tag) == '0':
-                zeros += 1
+        for total, (sent, tag) in enumerate(data_generator):
+            # print(i, ':', tag, sent)
+            if str(tag) == '0': zeros += 1
+
+            if not tag:
+                # write to file for further analysis
+                drop_file.write(str(sent).strip() + '\n')
+
         print('TOTAL={}, ZEROCLASS={}'.format(total+1, zeros))
+
         """
         Statistics with Sherlock as input:
         4716/6766 marked automatically with ('ORG', 'PRODUCT', 'FAC', 'PERSON', 'NORP', 'EVENT', 'DATE', 'MONEY')
@@ -132,7 +140,7 @@ def test_articles():
         #                 print(np.shape(x), y, sw)
 
         ### Testing tagger
-        data_generator = tagger(preprocessor(data_fetcher.get()))
+        data_generator = tagger(preprocessor(data_fetcher.get_raw_lines()))
         for event, tag in data_generator:
             print(tag, event.sentence)
 
@@ -144,4 +152,5 @@ def test_articles():
 
 if __name__ == '__main__':
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    test_tagger_texts('../samples.txt')
+    fh = log.FileHandler('marking.log')
+    test_tagger_texts()
