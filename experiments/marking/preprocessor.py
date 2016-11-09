@@ -14,20 +14,26 @@ class Preprocessor:
     def __call__(self, texts):
         # log.debug('Preprocessor: processing texts: {}'.format(texts))
         for text in texts:
-            for sent in self.objects(text):
-                yield sent
+            for obj in self.objects(text):
+                yield obj
 
     def objects(self, text):
         raise NotImplementedError
 
 
 class PreprocessTexts(Preprocessor):
+    """Splits texts on sentences; drops short sentences (meausured in words)."""
+
+    def __init__(self, nlp,  min_words_in_sentence=1):
+        self.min_words = min_words_in_sentence
+        super().__init__(nlp)
+
     def objects(self, text: str):
         """Yields sentences from text"""
-        log.debug('Preprocessor: processing text: {}'.format(text))
+        log.debug('Preprocessor: processing text: {}...'.format(text[:min(200, len(text))]))
         for sent in self.nlp(text).sents:
-            if type(sent) is Span:
-                log.debug('Preprocessor: yielding sent: {}'.format(text))
+            if type(sent) is Span and len(sent) >= self.min_words:
+                # log.debug('Preprocessor: yielding sent: {}'.format(repr(sent.text.strip())))
                 yield sent
 
 

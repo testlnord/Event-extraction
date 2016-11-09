@@ -41,11 +41,11 @@ class DummyTagger(Tagger):
     def __init__(self, tags, dummy_tag=None):
         super().__init__(tags)
 
-        self.dummy_tag = self.tags.default_tag
-        if dummy_tag and self.tags.is_correct(dummy_tag):
-            self.dummy_tag = dummy_tag
-        else:
-            log.warning('DummyTagger: provided dummy tag is not correct! Using default tag={}'.format(self.dummy_tag))
+        self.dummy_tag = dummy_tag
+        # self.dummy_tag = self.tags.default_tag
+        # if dummy_tag and self.tags.is_correct(dummy_tag):
+        # else:
+        #     log.warning('DummyTagger: provided dummy tag is not correct! Using default tag={}'.format(self.dummy_tag))
 
     def tag(self, text):
         return self.dummy_tag
@@ -91,7 +91,7 @@ class HeuristicTagger(Tagger):
 
         for tok in tokens:
             if tok.ent_type_ in self.ne_types:
-                log.debug('HeuristicTagger: _ner_match: token "{}"; tok.ent_type "{}"'.format(tok.text, tok.ent_type_))
+                log.debug('HeuristicTagger: _ner_match: token {}; tok.ent_type "{}"'.format(repr(tok.text), tok.ent_type_))
                 return True
         return False
 
@@ -102,7 +102,7 @@ class HeuristicTagger(Tagger):
         for tok in tokens:
             for keyphrase in self.keyphrases:
                 if tok.similarity(keyphrase) > self.min_similarity:
-                    log.debug('HeuristicTagger: _similar_words_match: token "{}"; keyphrase "{}"'.format(tok.text, keyphrase))
+                    log.debug('HeuristicTagger: _similar_words_match: token {}; keyphrase {}'.format(repr(tok.text), repr(keyphrase)))
                     return True
         return False
 
@@ -112,7 +112,7 @@ class HeuristicTagger(Tagger):
 
         for tok in tokens:
             if not (tok.like_num or tok.is_punct or tok.is_space or tok.has_vector):
-                log.debug('HeuristicTagger: _unknown_words_match: token "{}"'.format(tok.text))
+                log.debug('HeuristicTagger: _unknown_words_match: token {}'.format(repr(tok.text)))
                 return True
         return False
 
@@ -126,7 +126,7 @@ class HeuristicSpanTagger(HeuristicTagger):
         _tag = None
         if not res:
             _tag = self.tags.default_tag
-            log.debug('HeuristicTagger: tagged text "{}"; tag={}'.format(span.text, _tag))
+            log.debug('HeuristicTagger: tagged text {}; tag={}'.format(repr(span.text), _tag))
         return _tag
 
 
@@ -158,7 +158,7 @@ class HeuristicEventTagger(HeuristicTagger):
         _tag = None
         if not res:
             _tag = self.tags.default_tag
-            log.debug('HeuristicTagger: tagged event "{}"; tag={}'.format(repr(event), _tag))
+            log.debug('HeuristicTagger: tagged event {}; tag={}'.format(repr(event), _tag))
         return _tag
 
     def _extract_tokens(self, offsets, doc):

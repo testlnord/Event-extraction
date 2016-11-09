@@ -5,7 +5,12 @@ from experiments.marking.tags import Tags
 
 
 class Encoder:
-    def __init__(self, nlp, tags: Tags):
+    def __init__(self, nlp, tags: Tags, none_tag_handler=None):
+        """none_tag_handler allows us to add arbitrary logic for processing untagged objects.
+        E.g. write them to file for further analysis."""
+        def default_handler(text): pass
+        if not none_tag_handler:
+            self.none_tag_handler = default_handler
         self.nlp = nlp
         self.tags = tags
 
@@ -16,6 +21,8 @@ class Encoder:
             # if tag is None then ignore that pair
             if tag:
                 yield self.encode(text, tag)
+            else:
+                self.none_tag_handler(text)
 
     def encode(self, text: Span, raw_tag) -> (np.ndarray, np.ndarray, np.ndarray):
         """Encodes single pair of (text: Span, raw_tag).
@@ -40,11 +47,11 @@ class Encoder:
 
 
 class PaddingEncoder(Encoder):
-    def __init__(self, nlp, tags, pad_to_length, pad_value=0, pad_tags=False):
+    def __init__(self, nlp, tags, pad_to_length, pad_value=0, pad_tags=False, none_tag_handler=None):
         self.pad_to_length = pad_to_length
         self.pad_value = pad_value
         self.pad_tags = pad_tags
-        super(PaddingEncoder, self).__init__(nlp, tags)
+        super(PaddingEncoder, self).__init__(nlp, tags, none_tag_handler)
 
     def encode(self, text, raw_tag):
         text_encoded, sample_weights = self.encode_text(text)
