@@ -44,22 +44,8 @@ class ArticleTextFetch:
     def get_old(self):
         """Yield articles from database"""
         for article in self.db.get_articles():
-            yield self._texts_from_article(article)
-
-    def test_get_async(self):
-        """Dummy testing method"""
-        import asyncio
-        def gen(d, n):
-            """Generators of n integer numbers kratnih d"""
-            for i in range(1, n + 1):
-                yield i * d
-        n = 3
-        generators = [gen(i, n) for i in (2,3,5,7)]
-
-        for gen in generators:
-            for i in gen:
-                yield i
-
+            for text in self._texts_from_article(article):
+                yield text
 
     def test_get(self):
         """Dummy testing method"""
@@ -81,6 +67,7 @@ class ArticleTextFetch:
             log.warning('ArticleTextFetch: no output specified! Returning empty tuple.')
 
         return tuple(t)
+
 
 class FilesFetcher:
     @staticmethod

@@ -31,6 +31,8 @@ class PreprocessTexts(Preprocessor):
     def objects(self, text: str):
         """Yields sentences from text"""
         log.debug('Preprocessor: processing text: {}...'.format(text[:min(200, len(text))]))
+        # replace apostrophe (&#8217;) to single quotation mark as spacy doesn't recognise it
+        text = text.replace("’", "'")
         for sent in self.nlp(text).sents:
             if type(sent) is Span and len(sent) >= self.min_words:
                 # log.debug('Preprocessor: yielding sent: {}'.format(repr(sent.text.strip())))
