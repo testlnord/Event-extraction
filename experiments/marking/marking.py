@@ -1,7 +1,7 @@
 import logging as log
 import numpy as np
-from spacy.en import English
-from spacy.tokens import Span
+from spacy.en import English, Vocab
+from spacy.tokens import Token, Span
 
 from data_mining.downloaders import article_downloaders
 from data_mining.downloaders import blogs_parser, developerandeconomics, infoworld, itnews, slashdot
@@ -49,15 +49,29 @@ def test_tagger_events():
         log.info('Keyboard Interrupt happened. Exiting.')
         exit(0)
 
+
+def get_nlp(path_to_vecs='/media/Documents/datasets/word_vecs/glove.840B.300d.bin'):
+    def add_vectors(vocab):
+        #vocab.resize_vectors(vocab.load_vectors_from_bin_loc(open(path_to_vecs)))
+        vocab.load_vectors_from_bin_loc(path_to_vecs)
+    nlp = English(add_vectors=add_vectors)
+    log.info('Loaded {} word vectors from {}'.format(len(nlp.vocab), path_to_vecs))
+    return nlp
+
+
 def test_tagger_texts():
-    nlp = English()
+    nlp = get_nlp()
+    # nlp = English()
     log.info('Loaded spacy')
     raw_tags = (0, 1)
     tags = CategoricalTags(raw_tags)
 
     drop_file = open('../untagged_last.txt', 'a')
-    data1 = FilesFetcher.get_texts_from_files(['../texts.txt'])
-    data2 = FilesFetcher.get_texts_from_filetree('/media/Documents/datasets/OANC-GrAF')
+    data0 = ArticleTextFetch().get_old()
+    data1 = FileLineFetcher('../samples.txt', nlp).get_raw_lines()
+    data2 = FilesFetcher.get_texts_from_files(['../texts.txt']) # Sherlock Holmes and something else
+    data3 = FilesFetcher.get_texts_from_filetree('/media/Documents/datasets/OANC-GrAF') # lots of data...
+
     preprocessor = PreprocessTexts(nlp, min_words_in_sentence=3)
     # encoder = PaddingEncoder(nlp, tags, 50)
 
@@ -68,28 +82,40 @@ def test_tagger_texts():
     tagger.add_tagger(tagger1)
     tagger.add_tagger(tagger2)
 
+    i = 0
+    zeros = 0
     try:
-        data_generator = tagger(preprocessor(data2))
-        zeros = 0
-        total = 0
-        for total, (sent, tag) in enumerate(data_generator):
-            # print(i, ':', tag, sent)
-            if str(tag) == '0': zeros += 1
-
-            if not tag:
+        data_generator = tagger(preprocessor(data0))
+        for i, (sent, tag) in enumerate(data_generator, 1):
+            if tag == tags.default_tag:
+                print(i, ':', tag, sent)
+                zeros += 1
+            elif tag is None:
                 # write to file for further analysis
                 drop_file.write(str(sent).strip() + '\n')
 
-        print('TOTAL={}, ZEROCLASS={}'.format(total+1, zeros))
+        print('TOTAL={}, ZEROCLASS={}'.format(i, zeros))
 
         """
-        Statistics with Sherlock as input:
-        4716/6766 marked automatically with ('ORG', 'PRODUCT', 'FAC', 'PERSON', 'NORP', 'EVENT', 'DATE', 'MONEY')
-        5515/6766 marked automatically with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT')
+        Statistics
+622j/811
+        texts.txt
+        4716/6766 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'PERSON', 'NORP', 'EVENT', 'DATE', 'MONEY')
+        5515/6766 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT')
+
+        articles from database (summaries)
+            without similarity test
+            1144/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with original Glove
+            1426/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with full 840B Glove
+
+            with similarity test (0.6) with ('released', 'launched', 'updated', 'unveiled', 'new version', 'started')
+            890/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with original Glove
+            917/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with full 840B Glove
+
         """
 
     except KeyboardInterrupt:
-        log.info('Keyboard Interrupt happened. Exiting.')
+        log.info('Keyboard Interrupt happened. Exiting. Last unhandled is #{}'.format(i))
         exit(0)
 
 
@@ -151,6 +177,5 @@ def test_articles():
 
 
 if __name__ == '__main__':
-    log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    fh = log.FileHandler('marking.log')
+    log.basicConfig(filename='marking.log', format='%(levelname)s:%(message)s', level=log.DEBUG)
     test_tagger_texts()
