@@ -24,6 +24,11 @@ class Encoder:
             else:
                 self.none_tag_handler(text)
 
+    def encode(self, text, tag):
+        raise NotImplementedError
+
+
+class SentenceEncoder(Encoder):
     def encode(self, text: Span, raw_tag) -> (np.ndarray, np.ndarray, np.ndarray):
         """Encodes single pair of (text: Span, raw_tag).
         Also returns mask, representing actual values (non-zero) in returned encoded text."""
@@ -46,12 +51,12 @@ class Encoder:
         return token.vector
 
 
-class PaddingEncoder(Encoder):
+class PaddingEncoder(SentenceEncoder):
     def __init__(self, nlp, tags, pad_to_length, pad_value=0, pad_tags=False, none_tag_handler=None):
         self.pad_to_length = pad_to_length
         self.pad_value = pad_value
         self.pad_tags = pad_tags
-        super(PaddingEncoder, self).__init__(nlp, tags, none_tag_handler)
+        super().__init__(nlp, tags, none_tag_handler)
 
     def encode(self, text, raw_tag):
         text_encoded, sample_weights = self.encode_text(text)
