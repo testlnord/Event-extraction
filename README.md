@@ -13,24 +13,24 @@ We assume that event is a triple of (Subject, Action, Object). For example
 
 # What can be done now
 
- ### News collection and extraction
+### News collection and extraction
 
- We have some crawlers written. So you can run
+We have some crawlers written. So you can run
 
- ```python3 spacy_event_extractor.py ```
+```python3 spacy_event_extractor.py ```
 
- to get about a couple of thousands articles from different websites. This script will
- also extract events just after it and put everything to database.
+to get about a couple of thousands articles from different websites. This script will
+also extract events just after it and put everything to database.
 
- ### Running web-interface
+### Running web-interface
 
- We have a simple web-UI to view and manipulate extracted events. You can start it just
- by running:
+We have a simple web-UI to view and manipulate extracted events. You can start it just
+by running:
 
- ```python3 run_web_server.py start```
+```python3 run_web_server.py start```
 
- This command will start small server on port 9090.
- It can be accessed only from localhost.
+This command will start small server on port 9090.
+It can be accessed only from localhost.
 
 
 # Installation
