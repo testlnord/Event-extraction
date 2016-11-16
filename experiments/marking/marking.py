@@ -60,8 +60,8 @@ def get_nlp(path_to_vecs='/media/Documents/datasets/word_vecs/glove.840B.300d.bi
 
 
 def test_tagger_texts():
-    nlp = get_nlp()
-    # nlp = English()
+    # nlp = get_nlp()
+    nlp = English()
     log.info('Loaded spacy')
     raw_tags = (0, 1)
     tags = CategoricalTags(raw_tags)
@@ -111,6 +111,10 @@ def test_tagger_texts():
             with similarity test (0.6) with ('released', 'launched', 'updated', 'unveiled', 'new version', 'started')
             890/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with original Glove
             917/4860 marked as zero with ('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT') with full 840B Glove
+
+            with similarity test (0.6) with ('released', 'launched', 'updated', 'unveiled')
+            1013/4860
+
 
         """
 

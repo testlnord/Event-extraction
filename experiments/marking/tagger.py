@@ -74,8 +74,8 @@ class TextUserTagger(Tagger):
 class HeuristicTagger(Tagger):
     def __init__(self, tags, nlp,
                  keyphrases=('released', 'launched', 'updated', 'unveiled',
-                             # 'announced', 'available', 'introduces', 'is coming',
-                             # 'changes', ''started', redesigned', 'revised', 'fixed', 'improved', 'designed',
+                             # 'upgrade', 'announced', 'available', 'introduces', 'coming',
+                             # 'changes', 'share', 'started', redesigned', 'revised', 'fixed', 'improved', 'designed',
                              # 'newest', 'latest', 'better', 'finally',
                              # 'enhancements', 'features', 'build', 'version',
                  ),
@@ -124,9 +124,10 @@ class HeuristicTagger(Tagger):
 class HeuristicSpanTagger(HeuristicTagger):
     def tag(self, span: Span):
         res1 = self._ner_match(span)
-        res2 = self._unknown_words_match(span)
+        # res2 = self._unknown_words_match(span)
         res3 = self._similar_words_match(span)
-        res = res1 or res2 or res3
+        # res = res1 or res2 or res3
+        res = res3 or res1
 
         #res = self._ner_match(span) or \
               # self._unknown_words_match(span) or \

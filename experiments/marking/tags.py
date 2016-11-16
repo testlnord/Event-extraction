@@ -34,6 +34,7 @@ class CategoricalTags(Tags):
 
     @property
     def default_tag(self):
+        """Returns default raw tag"""
         return '0'
 
     def _to_categorical(self, raw_tag):

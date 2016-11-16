@@ -8,9 +8,6 @@ from experiments.event_with_offsets import EventOffsets
 
 
 class Preprocessor:
-    def __init__(self, nlp):
-        self.nlp = nlp
-
     def __call__(self, texts):
         # log.debug('Preprocessor: processing texts: {}'.format(texts))
         for text in texts:
@@ -26,7 +23,7 @@ class PreprocessTexts(Preprocessor):
 
     def __init__(self, nlp,  min_words_in_sentence=1):
         self.min_words = min_words_in_sentence
-        super().__init__(nlp)
+        self.nlp = nlp
 
     def objects(self, text: str):
         """Yields sentences from text"""
@@ -46,7 +43,7 @@ class PreprocessJsonOpenIEExtractions(Preprocessor):
         """nb_most_confident: yield at max that number of events per extraction
         events with high confidence preferred. if -1 then return all possible"""
         self.nb_most_confident = nb_most_confident
-        super().__init__(nlp)
+        self.nlp = nlp
 
     def objects(self, text):
         ces = sorted(self._parse(text), key=lambda x: x[0])
