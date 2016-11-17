@@ -1,17 +1,33 @@
+import pickle
 from collections import Counter
 import numpy as np
 from experiments.marking.encoder import Encoder
+from experiments.marking.tags import Tags
 
 
 class LetterNGramEncoder(Encoder):
-    def __init__(self, nlp, tags, corpora, vector_length=-1, ngram=3, dummy_char='^'):
+    def __init__(self, nlp, tags: Tags, corpora=None, vector_length=-1, ngram=3, dummy_char='^',
+                 path_to_saved_vocab=None):
+        """Instantiate encoder using raw text corpora or serialised vocab.
+
+        Args:
+            corpora: iterable of raw texts (str) for building vocabulary
+            path_to_saved_vocab: load serialised vocabulary instead of processing corpora
+            vector_length: length of the encodings (i.e. result vectors)
+            ngram: use that number of symbols in ngram (default 3)
+            dummy_char: symbol to use for extending tokens (e.g. when dummy_char='#': 'word' becames '#word#')
+        """
+
         super().__init__(nlp, tags)
 
         self.nb_other_features = 4 + 1 # see 'encode_token' method
-        self.vector_length = vector_length
         self.ngram = ngram
         self.dummy_char = dummy_char
-        self.train(corpora)
+
+        if path_to_saved_vocab:
+            self.load_vocab(path_to_saved_vocab, vector_length)
+        elif corpora:
+            self.train(corpora, vector_length)
 
     def encode(self, text, tags):
         sent_enc = self.encode_text(text)
@@ -27,37 +43,72 @@ class LetterNGramEncoder(Encoder):
     def encode_token(self, token):
         t = str(token)
         tl = t.lower()
-        ngrams = list(self._ngrams(tl))
-        preencoded = [int(entry in ngrams) for entry in self.vocab]
+        ngrams = list(self.ngrams(tl))
+        encoded = [int(entry in ngrams) for entry in self.vocab]
 
         # all unknown ngrams encoded as one class (last bit in the vector of size = len(self.vocab) + 1)
         # so, the problem of possible missed (unseen) ngrams addressed here
-        unknown_there = any(ngram not in self.vocab for ngram in ngrams)
-        preencoded.append(int(unknown_there))
+        unknown_there = int(any(ngram not in self.vocab for ngram in ngrams))
 
         # preserving information about uppercase
         upmask = [int(c.isupper()) for c in t]
         while len(upmask) < 2:
             upmask.append(0)
-        additional_encodings = [upmask[0], int(any(upmask[1:])), int(all(upmask)), sum(upmask) / len(upmask)]
 
-        encoded = additional_encodings + preencoded
+        additional_features = [unknown_there, upmask[0], int(any(upmask[1:])), int(all(upmask)), sum(upmask) / len(upmask)]
+        encoded.extend(additional_features)
         return encoded
 
-    def train(self, corpora):
+    def train(self, corpora, vector_length=-1):
         raw_vocab = Counter()
         for text in corpora:
             doc = self.nlp(text, tag=False, entity=False, parse=False)
             for i, token in enumerate(doc):
                 t = token.text.lower()
-                raw_vocab += Counter(self._ngrams(t))
+                raw_vocab += Counter(self.ngrams(t))
 
-        top_n = None if self.vector_length < 1 else self.vector_length - self.nb_other_features
-        self.vocab = list(map(lambda item: item[0], raw_vocab.most_common(top_n)))
-        self.vector_length = len(self.vocab) + self.nb_other_features
+        self.vocab = list(map(lambda item: item[0], raw_vocab.most_common()))
+        self.set_vector_length(vector_length)
 
-    def _ngrams(self, token):
+    def save_vocab(self, path='./encoder_vocab'):
+        path += '_{}gram_{}len.bin'.format(self.ngram, self.vector_length)
+        if self.vocab is not None:
+            with open(path, 'wb') as f:
+                pickle.dump(self.vocab, f)
+
+    def load_vocab(self, path, vector_length=-1):
+        with open(path, 'rb') as f:
+            self.vocab = pickle.load(f)
+            self.ngram = len(self.vocab[0])
+            self.set_vector_length(vector_length)
+
+    def ngrams(self, token):
         t = self.dummy_char + str(token) + self.dummy_char
         for j in range(len(t) - self.ngram + 1):
             ngram = t[j:j+self.ngram]
             yield ngram
+
+    @property
+    def vector_length(self):
+        return self._vector_length
+
+    def set_vector_length(self, vector_length):
+        # real vector_length = core vector_length + nb_other_features
+        core_length = vector_length - self.nb_other_features
+        vocab_length = len(self.vocab)
+
+        if core_length <= 0:
+            # either provided vector_length is too small or is default value
+            self._vector_length = vocab_length + self.nb_other_features
+        elif core_length < vocab_length:
+            # cut vocab, throwing least frequent entries
+            self.vocab = self.vocab[:core_length]
+            self._vector_length = vector_length
+        else:
+            # just add useless ngrams to the vocab to keep vector length as desired
+            nb_pad_values = vocab_length - core_length
+            pad_value = self.dummy_char * self.ngram
+            self.vocab.extend([pad_value] * nb_pad_values)
+            self._vector_length = vector_length
+
+
