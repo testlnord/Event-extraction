@@ -76,10 +76,11 @@ class FilesFetcher:
         for path in paths:
             try:
                 with open(path) as f:
+                    log.info('FilesFetcher: reading file {}'.format(path))
                     yield f.read()
 
             except Exception as e:
-                log.warning('FilesFetcher: exception with file {}; {}'.format(repr(path), e.args))
+                log.warning('FilesFetcher: exception {} while opening path {}'.format(e.args, repr(path)))
 
     @staticmethod
     def get_texts_from_filetree(root_dir, pattern='.+\.txt$'):
@@ -93,7 +94,7 @@ class FilesFetcher:
         matcher = re.compile(pattern)
         for dirpath, dirnames, filenames in os.walk(root_dir):
             for fname in filenames:
-                if matcher.match(fname):
+                if matcher.match(fname) and fname[0] != '.':
                     filepath = os.path.join(dirpath, fname)
                     yield filepath
 
