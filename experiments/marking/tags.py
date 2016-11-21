@@ -1,13 +1,13 @@
-import logging as log
+
 
 class Tags:
-    def encode(self, raw_tag) -> list:
+    def encode(self, raw_tag):
         raise NotImplementedError
 
     def decode(self, cat):
         raise NotImplementedError
 
-    def is_correct(self, raw_tag) -> bool:
+    def is_correct(self, raw_tag):
         raise NotImplementedError
 
     @property
