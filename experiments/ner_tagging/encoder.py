@@ -1,6 +1,5 @@
 import pickle
 from collections import Counter
-import numpy as np
 from experiments.marking.encoder import Encoder
 from experiments.marking.tags import Tags
 
@@ -32,23 +31,33 @@ class LetterNGramEncoder(Encoder):
     def encode(self, text, tags):
         sent_enc = self.encode_text(text)
         tags_enc = self.encode_tags(tags)
-        return np.array(sent_enc), np.array(tags_enc)
+        return sent_enc, tags_enc
+        # return np.array(sent_enc), np.array(tags_enc)
 
     def encode_tags(self, raw_tags):
         return [self.tags.encode(raw_tag) for raw_tag in raw_tags]
 
+    # todo: test
+    def decode_tags(self, tags_encoded):
+        return [self.tags.decode(tag_enc) for tag_enc in tags_encoded]
+
     def encode_text(self, text):
-        return [self.encode_token(token) for token in text]
+        # return [self.encode_token(token) for token in text]
+        # todo: remove that!
+        # return [token.vector for token in self.nlp(' '.join(text))]
+        return [self.nlp(token).vector for token in text]
 
     def encode_token(self, token):
         t = str(token)
         tl = t.lower()
         ngrams = list(self.ngrams(tl))
-        encoded = [int(entry in ngrams) for entry in self.vocab]
 
-        # all unknown ngrams encoded as one class (last bit in the vector of size = len(self.vocab) + 1)
-        # so, the problem of possible missed (unseen) ngrams addressed here
-        unknown_there = int(any(ngram not in self.vocab for ngram in ngrams))
+        known_ngrams = [ngram for ngram in ngrams if ngram in self.dvocab.keys()]
+        unknown_there = 1 - len(known_ngrams) / len(ngrams)
+        encoded = [0] * len(self.dvocab)
+        indexes = [self.dvocab[ngram] for ngram in known_ngrams]
+        for index in indexes:
+            encoded[index] = 1
 
         # preserving information about uppercase
         upmask = [int(c.isupper()) for c in t]
@@ -69,6 +78,7 @@ class LetterNGramEncoder(Encoder):
 
         self.vocab = list(map(lambda item: item[0], raw_vocab.most_common()))
         self.set_vector_length(vector_length)
+        self._make_dict_vocab()
 
     def save_vocab(self, path='./encoder_vocab'):
         path += '_{}gram_{}len.bin'.format(self.ngram, self.vector_length)
@@ -81,12 +91,16 @@ class LetterNGramEncoder(Encoder):
             self.vocab = pickle.load(f)
             self.ngram = len(self.vocab[0])
             self.set_vector_length(vector_length)
+            self._make_dict_vocab()
 
     def ngrams(self, token):
         t = self.dummy_char + str(token) + self.dummy_char
         for j in range(len(t) - self.ngram + 1):
             ngram = t[j:j+self.ngram]
             yield ngram
+
+    def _make_dict_vocab(self):
+        self.dvocab = dict((item, i) for i, item in enumerate(self.vocab))
 
     @property
     def vector_length(self):
@@ -110,5 +124,3 @@ class LetterNGramEncoder(Encoder):
             pad_value = self.dummy_char * self.ngram
             self.vocab.extend([pad_value] * nb_pad_values)
             self._vector_length = vector_length
-
-
