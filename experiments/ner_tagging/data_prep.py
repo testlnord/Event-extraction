@@ -174,7 +174,7 @@ def test_shapes():
     # path='data_encoded_wikigold_{}gram_{}len.bin'.format(ngram, x_len)
     # data_fetch = deserialize_data_with_logging(path)
 
-    pad = Padding(timesteps, pad_tags=True)
+    pad = Padding(timesteps)
     batch = BatchMaker(batch_size)
     batched = batch(pad(data_fetch))
 
@@ -189,10 +189,10 @@ def test_shapes():
 
 if __name__ == '__main__':
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    # test_shapes()
+    test_shapes()
     # test()
     # test_serialisation()
-    test_gen()
+    # test_gen()
 
     # data_thing, encoder = data_gen(10000)
     # for i, item in enumerate(encoder(data_thing._wikigold_conll()), 1):

@@ -61,29 +61,30 @@ class BatchMaker:
 
 
 class Padding:
-    def __init__(self, pad_to_length, pad_value=0, pad_tags=False, cut_too_long=True):
+    def __init__(self, pad_to_length, pad_value=0, pad_first_n=-1, cut_too_long=True):
         self.pad_to_length = pad_to_length
         self.pad_value = pad_value
-        self.pad_tags = pad_tags
+        self.pad_first_n = pad_first_n
         self.cut_too_long = cut_too_long
 
     def __call__(self, args_generator):
         for args in args_generator:
-            yield self.pad(*args[:2])
+            yield self.pad(*args)
 
-    def pad(self, text, tag):
-        _text = np.array(text)
-        _tag = np.array(tag)
-
-        ones = len(text)
+    def pad(self, *args):
+        """Assuming the length of the first arg in args as the length needed to pad."""
+        ones = len(args[0])
         zeros = max(0, self.pad_to_length - ones)
-        pad_text = ((0, zeros), (0, 0))
+        # it is the thing which dimensions and how (prepend or append) to pad
+        pad_mask = ((0, zeros), (0, 0))
         cut = min(ones, self.pad_to_length) if self.cut_too_long else ones
+        nb_pad = len(args) if self.pad_to_length < 0 else self.pad_to_length
 
-        # mask, telling us about inserted redundant values
         sample_weights = np.array([1] * cut + [0] * zeros)
-        _text = np.pad(_text[:cut], pad_width=pad_text, mode='constant', constant_values=self.pad_value)
-        if self.pad_tags:
-            _tag = np.pad(_tag[:cut], pad_width=pad_text, mode='constant', constant_values=self.pad_value)
+        res = [np.array(arg) for arg in args]
+        res[:nb_pad] = [self._pad_single(arg, pad_mask, cut) for arg in res[:nb_pad]]
+        res.append(sample_weights)
+        return tuple(res)
 
-        return _text, _tag, sample_weights
+    def _pad_single(self, arg, pad_mask, cut):
+        return np.pad(arg[:cut], pad_width=pad_mask, mode='constant', constant_values=self.pad_value)
