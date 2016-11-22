@@ -4,35 +4,39 @@ from itertools import cycle, islice
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
 from experiments.data_common import *
-from experiments.ner_tagging.data_prep import data_gen, deserialize_data
+from experiments.ner_tagging.data_prep import data_gen
 
 
 class NERNet:
-    def __init__(self, x_len, timesteps=None, batch_size=1, nbclasses=3):
+    def __init__(self, x_len, timesteps=None, batch_size=1, nbclasses=3, path_to_model=None):
         self.x_len = x_len
         self.batch_size = batch_size
         self.nbclasses = nbclasses
         self.timesteps = timesteps
+        self.model = None
 
-        self.model()
-        self.data()
-        # visualise(self.model)
-
-    def data(self, splits=(0.1, 0.2, 0.7)):
         data_thing, encoder = data_gen(vector_length=self.x_len)
         self.encoder = encoder
+        self._data_thing = data_thing
+        self.padder = Padding(pad_to_length=self.timesteps)
+        self.batch = BatchMaker(self.batch_size)
 
-        data_length = len(data_thing)
+        self.data()
+        if path_to_model:
+            self.load_model(path_to_model)
+        else:
+            self.model()
+
+    def data(self, splits=(0.1, 0.2, 0.7)):
+        data_length = len(self._data_thing)
         edges = split_range(data_length, self.batch_size, splits)
         self.data_splits = []
-        pad = Padding(pad_to_length=self.timesteps, pad_tags=True)
-        batch = BatchMaker(self.batch_size)
 
         for a, b in edges:
-            data_split = encoder(islice(data_thing.objects(), a, b))
+            data_split = self.encoder(islice(self._data_thing.objects(), a, b))
             if self.timesteps:
-                data_split = pad(data_split)
-            data_split = cycle(batch(data_split))
+                data_split = self.padder(data_split)
+            data_split = cycle(self.batch(data_split))
             self.data_splits.append(data_split)
 
         self.data_val = self.data_splits[0]
@@ -45,14 +49,14 @@ class NERNet:
         data_train = encoder(data_thing._wikiner_wp3())
         data_test = encoder(data_thing._wikigold_conll())
         if self.timesteps:
-            pad = Padding(self.timesteps, pad_tags=True)
+            pad = Padding(self.timesteps)
             data_train = pad(data_train)
             data_test = pad(data_test)
         batch = BatchMaker(self.batch_size)
         self.data_train = cycle(batch(data_train))
         self.data_val = cycle(batch(data_test))
 
-    def model(self, timesteps=None):
+    def model(self):
         output_len = 150
         blstm_cell_size = 20
         lstm_cell_size = 20
@@ -84,26 +88,49 @@ class NERNet:
         self.model.save(path)
 
     def load_model(self, path='model_full.h5'):
+        log.info('NERNet: Loading model...')
         del self.model
         self.model = load_model(path)
+        log.info('NERNet: Loaded model.')
 
     def evaluate(self, nb_val_samples=2048):
         log.info('NERNet: Evaluating...')
         self.model.evaluate_generator(self.data_val, val_samples=nb_val_samples)
 
-    # todo: test
+    # todo: make more effective and for batchs
     def predict_single(self, tokenized_text):
+        log.info('NERNet: Predicting {}'.format(tokenized_text))
+
+        orig_len = len(tokenized_text)
         text_encoded = self.encoder.encode_text(tokenized_text)
-        predicted = self.model.predict([text_encoded], batch_size=1)
-        res = self.encoder.decode_tags(predicted[0])
-        return res
+        text_encoded = self.padder.pad(text_encoded)
+        a = np.array(text_encoded[:1])
+        predicted_all = self.model.predict(a, batch_size=1)
+
+        predicted = predicted_all[0][:orig_len]
+        log.debug('NERNet: Probabilites:\n', predicted)
+        res = np.zeros_like(predicted)
+        # replacing probabilities with category values
+        res[range(len(predicted)), predicted.argmax(1)] = 1
+
+        return self.encoder.decode_tags(res.tolist())
 
 
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    net = NERNet(x_len=300, batch_size=32, nbclasses=3, timesteps=100)
-    net.load_model()
-    net.train(epochs=5)
+    model_path = 'model_full.h5'
+    net = NERNet(x_len=300, batch_size=32, nbclasses=3, timesteps=100, path_to_model=model_path)
+    # net.evaluate(nb_val_samples=256)
+
+    text = '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .'.split()
+    text = np.array(text)
+    truth = 'B 0 0 0 0 0 B 0 0 0 B I I I 0'.split()
+    predicted = net.predict_single(text)
+    print('text', text)
+    print('pred', predicted)
+    print('true', truth)
+
+    # net.train(epochs=5)
     # net.save_model()
-    print(net.evaluate())
+    # print(net.evaluate())
 
