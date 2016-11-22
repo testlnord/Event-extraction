@@ -37,7 +37,6 @@ class LetterNGramEncoder(Encoder):
     def encode_tags(self, raw_tags):
         return [self.tags.encode(raw_tag) for raw_tag in raw_tags]
 
-    # todo: test
     def decode_tags(self, tags_encoded):
         return [self.tags.decode(tag_enc) for tag_enc in tags_encoded]
 
@@ -45,7 +44,7 @@ class LetterNGramEncoder(Encoder):
         # return [self.encode_token(token) for token in text]
         # todo: remove that!
         # return [token.vector for token in self.nlp(' '.join(text))]
-        return [self.nlp(token).vector for token in text]
+        return [self.nlp(str(token)).vector for token in text]
 
     def encode_token(self, token):
         t = str(token)
@@ -124,3 +123,19 @@ class LetterNGramEncoder(Encoder):
             pad_value = self.dummy_char * self.ngram
             self.vocab.extend([pad_value] * nb_pad_values)
             self._vector_length = vector_length
+
+
+if __name__ == '__main__':
+    # testing tag encoding and decoding
+    from spacy.en import English
+    from experiments.marking.tags import CategoricalTags
+    raw_tags = ('O', 'I', 'B')
+    encoder = LetterNGramEncoder(English(), CategoricalTags(raw_tags))
+
+    truth = 'B O B O O O B B I O B I I I O'.split()
+    print('Original:', truth)
+    enc = encoder.encode_tags(truth)
+    dec = encoder.decode_tags(enc)
+    print(' Decoded:', dec)
+    print(' Encoded:', enc)
+    assert all(x == y for x, y in zip(truth, dec))
