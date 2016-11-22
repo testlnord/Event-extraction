@@ -57,6 +57,7 @@ class NERNet:
         self.data_val = cycle(batch(data_test))
 
     def model(self):
+        # architecture is from the paper
         output_len = 150
         blstm_cell_size = 20
         lstm_cell_size = 20
@@ -95,42 +96,55 @@ class NERNet:
 
     def evaluate(self, nb_val_samples=2048):
         log.info('NERNet: Evaluating...')
-        self.model.evaluate_generator(self.data_val, val_samples=nb_val_samples)
+        return self.model.evaluate_generator(self.data_val, val_samples=nb_val_samples)
 
-    # todo: make more effective and for batchs
-    def predict_single(self, tokenized_text):
-        log.info('NERNet: Predicting {}'.format(tokenized_text))
+    # todo: test
+    def __call__(self, doc):
+        """"""
+        for sents_batch in self.batch(doc.sents):
+            classes_batch = self.predict_batch(sents_batch)
+            # decoding categorial values (classes) to original tags and converting numpy int to normal python int
+            tags_batch = [self.encoder.decode_tags(map(int, classes)) for classes in classes_batch]
+            for sent, sent_tags, sent_classes in zip(sents_batch, tags_batch, classes_batch):
+                for token, iob_tag, iob_class in zip(sent, sent_tags, sent_classes):
+                    token.ent_iob = iob_class
+                    token.ent_iob_ = iob_tag
 
-        orig_len = len(tokenized_text)
-        text_encoded = self.encoder.encode_text(tokenized_text)
-        text_encoded = self.padder.pad(text_encoded)
-        a = np.array(text_encoded[:1])
-        predicted_all = self.model.predict(a, batch_size=1)
+    def predict_batch(self, tokenized_texts):
+        orig_lengths = [len(ttext) for ttext in tokenized_texts]
+        texts_enc = [self.padder.pad(self.encoder.encode_text(ttext))[0] for ttext in tokenized_texts]
+        x = np.array(texts_enc)
+        batch_size = len(x)
 
-        predicted = predicted_all[0][:orig_len]
-        log.debug('NERNet: Probabilites:\n', predicted)
-        res = np.zeros_like(predicted)
-        # replacing probabilities with category values
-        res[range(len(predicted)), predicted.argmax(1)] = 1
-
-        return self.encoder.decode_tags(res.tolist())
+        classes_batch = self.model.predict_classes(x, batch_size=batch_size)
+        # cutting to original lengths
+        classes_batch = (classes[:orig_length] for orig_length, classes in zip(orig_lengths, classes_batch))
+        return classes_batch
 
 
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
     model_path = 'model_full.h5'
     net = NERNet(x_len=300, batch_size=32, nbclasses=3, timesteps=100, path_to_model=model_path)
-    # net.evaluate(nb_val_samples=256)
-
-    text = '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .'.split()
-    text = np.array(text)
-    truth = 'B 0 0 0 0 0 B 0 0 0 B I I I 0'.split()
-    predicted = net.predict_single(text)
-    print('text', text)
-    print('pred', predicted)
-    print('true', truth)
-
     # net.train(epochs=5)
     # net.save_model()
-    # print(net.evaluate())
+    print('Evaluation: {}'.format(net.evaluate(nb_val_samples=256)))
+
+    texts = [
+        '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .',
+        'Founding member Kojima Minoru played guitar on Good Day , and Wardanceis cover '
+        'of a song by UK post punk industrial band Killing Joke .',
+    ]
+    trues = [
+        'B O O O O O B O O O B I I I O',
+        'O O B I O O O B I O O B O O O O O B O O O O B I O',
+    ]
+    prepared_texts = [np.array(text.split()) for text in texts]
+
+    for i, (text, true, pred) in enumerate(zip(texts, trues, net.predict_batch(prepared_texts))):
+        print('#{}'.format(i))
+        print('text', text)
+        print('pred', pred)
+        print('true', true)
+
 
