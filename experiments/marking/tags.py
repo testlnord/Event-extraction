@@ -43,7 +43,14 @@ class CategoricalTags(Tags):
         return cat
 
     def _to_raw(self, cat) -> str:
-        i = cat.index(1)
+        i = None
+        if isinstance(cat, list):
+            i = cat.index(1)
+        elif isinstance(cat, int):
+            i = cat
+        else:
+            raise TypeError('Category has inappropriate type. Extepcted list or int. Got {}'.format(type(cat)))
+
         return self.raw_tags[i]
 
 
