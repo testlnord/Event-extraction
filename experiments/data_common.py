@@ -41,23 +41,38 @@ def visualise(model, filename='model.png', exit_after=False):
         exit()
 
 
+def cycle_unbuffered(generator_function):
+    """Make infinite generator (cycled) from generator function"""
+    while True:
+        for item in generator_function():
+            yield item
+
+
 class BatchMaker:
-    def __init__(self, batch_size=1, element_wise_batches=True):
+    def __init__(self, batch_size, element_wise_batches=True, output_last_incomplete=True):
         self.batch_size = batch_size
-        self.element_wise = element_wise_batches
+        self.output_last_incomplete = output_last_incomplete
+        # define transformation function for output batches at construction to avoid if..else at every iteration
+        self._transform = self._transpose if element_wise_batches else self._id
 
     def __call__(self, iterable):
-        """Yields tuples of batchs (element_wise == True) or batch of tuples (element_wise == False)"""
+        """Yields tuples of batches (element_wise == True) or batch of tuples (element_wise == False)"""
         cur_batch = []
         for elems in iterable:
             cur_batch.append(tuple(map(np.array, elems)))
             if len(cur_batch) == self.batch_size:
-                l = len(elems)
-                # transposing if element_wise
-                # in essence: res = zip(*cur_batch); and type conversions
-                res = list(map(np.array, zip(*cur_batch))) if self.element_wise else cur_batch
-                yield res
+                yield self._transform(cur_batch)
                 cur_batch.clear()
+
+        if len(cur_batch) != 0 and self.output_last_incomplete:
+            yield self._transform(cur_batch)
+
+    def _transpose(self, batch):
+        # in essence: res = zip(*cur_batch); and type conversions
+        return list(map(np.array, zip(*batch)))
+
+    def _id(self, batch):
+        return list(map(np.array, batch))
 
 
 class Padding:
@@ -88,3 +103,4 @@ class Padding:
 
     def _pad_single(self, arg, pad_mask, cut):
         return np.pad(arg[:cut], pad_width=pad_mask, mode='constant', constant_values=self.pad_value)
+
