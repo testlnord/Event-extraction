@@ -41,7 +41,7 @@ def visualise(model, filename='model.png', exit_after=False):
         exit()
 
 
-def cycle_unbuffered(generator_function):
+def cycle_uncached(generator_function):
     """Make infinite generator (cycled) from generator function"""
     while True:
         for item in generator_function():
