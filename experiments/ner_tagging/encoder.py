@@ -19,7 +19,8 @@ class LetterNGramEncoder(Encoder):
 
         super().__init__(nlp, tags)
 
-        self.nb_other_features = 4 + 1 # see 'encode_token' method
+        # additional features about uppercase and wordvectors (see 'encode_token' method)
+        self.nb_other_features = self.nlp.vocab.vectors_length + 5
         self.ngram = ngram
         self.dummy_char = dummy_char
 
@@ -41,10 +42,9 @@ class LetterNGramEncoder(Encoder):
         return [self.tags.decode(tag_enc) for tag_enc in tags_encoded]
 
     def encode_text(self, text):
-        # return [self.encode_token(token) for token in text]
+        return [self.encode_token(token) for token in text]
+        # return [self.nlp(str(token)).vector for token in text]
         # todo: remove that!
-        # return [token.vector for token in self.nlp(' '.join(text))]
-        return [self.nlp(str(token)).vector for token in text]
 
     def encode_token(self, token):
         t = str(token)
@@ -58,13 +58,25 @@ class LetterNGramEncoder(Encoder):
         for index in indexes:
             encoded[index] = 1
 
+        # adding other features
+
+        # adding word embedding - pretty useful information
+        t_spacied = self.nlp(t, tag=False, entity=False, parse=False)
+        encoded.extend(t_spacied.vector)
+
         # preserving information about uppercase
         upmask = [int(c.isupper()) for c in t]
+        # avoiding errors because of too short tokens
         while len(upmask) < 2:
             upmask.append(0)
-
-        additional_features = [unknown_there, upmask[0], int(any(upmask[1:])), int(all(upmask)), sum(upmask) / len(upmask)]
+        additional_features = [unknown_there,
+                               upmask[0],
+                               int(any(upmask[1:])),
+                               int(all(upmask)),
+                               sum(upmask) / len(upmask),
+                               ]
         encoded.extend(additional_features)
+
         return encoded
 
     def train(self, corpora, vector_length=-1):
@@ -79,11 +91,13 @@ class LetterNGramEncoder(Encoder):
         self.set_vector_length(vector_length)
         self._make_dict_vocab()
 
-    def save_vocab(self, path='./encoder_vocab'):
-        path += '_{}gram_{}len.bin'.format(self.ngram, self.vector_length)
+    def save_vocab(self, dir='.'):
+        """Save vocabulary and return path to it"""
+        path = dir + '/encoder_vocab_{}gram_{}len.bin'.format(self.ngram, self.vector_length)
         if self.vocab is not None:
             with open(path, 'wb') as f:
                 pickle.dump(self.vocab, f)
+        return path
 
     def load_vocab(self, path, vector_length=-1):
         with open(path, 'rb') as f:
