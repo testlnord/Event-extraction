@@ -7,9 +7,9 @@ from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
 from keras.callbacks import ModelCheckpoint, TensorBoard
 from experiments.data_common import *
-from experiments.marking.tags import CategoricalTags
 from experiments.ner_tagging.preprocessor import NERPreprocessor
 from experiments.ner_tagging.encoder import LetterNGramEncoder
+from experiments.marking.tags import CategoricalTags
 
 
 class NERNet:
@@ -32,14 +32,19 @@ class NERNet:
             model_path = os.path.join(model_dir, model_name)
 
         model = load_model(model_path)
-        _, timesteps, x_len = model.layers[0].input_shape
 
+        _, timesteps, x_len = model.layers[0].input_shape
         if x_len != encoder.vector_length:
             raise ValueError('NERNet: encoder.vector_length is not consistent with the input of '
                              'loaded model ({} != {})'.format(encoder.vector_length, x_len))
+        _, timesteps, nbclasses = model.layers[-1].output_shape
+        if nbclasses != encoder.tags.nbtags:
+            raise ValueError('NERNet: encoder.tags.nbtags is not consistent with the output of '
+                             'loaded model ({} != {})'.format(encoder.tags.nbtags, nbclasses))
 
         net = cls(encoder, timesteps, batch_size)
         net._model = model
+        log.info('NERNet: loaded model from path {}'.format(model_path))
         return net
 
     def compile_model(self):
@@ -99,12 +104,6 @@ class NERNet:
     def save_model(self, path):
         self._model.save(path)
 
-    def load_model(self, path):
-        log.info('NERNet: Loading model ({})...'.format(path))
-        del self._model
-        self._model = load_model(path)
-        log.info('NERNet: Loaded model.')
-
     def evaluate(self, data_gen, nb_val_samples):
         log.info('NERNet: Evaluating...')
         data_val = self._make_data_gen(data_gen)
@@ -120,6 +119,8 @@ class NERNet:
             classes_batch = self.predict_batch(sents_batch)
             for classes in classes_batch:
                 doc_classes.extend(classes)
+
+        assert len(doc_classes) == len(spacy_doc_classes)
 
         # Merge predicted classes and spacy iob classes
         for i, (iob_class, spacy_iob_class) in enumerate(zip(doc_classes, spacy_doc_classes)):
@@ -137,7 +138,7 @@ class NERNet:
                 log.debug('NERNet: tagged: spacy={}, pred={}, token={}'.format(spacy_iob_class, iob_class, doc[i].text))
 
         # Extract entities
-        entities = re.compile('3[21]*1|31*')
+        entities = re.compile('31*|1+')
         doc_classes_str = ''.join(map(str, spacy_doc_classes))
         spans = [m.span() for m in entities.finditer(doc_classes_str)]
         entities = tuple(doc[a:b] for a, b in spans)
@@ -157,7 +158,7 @@ class NERNet:
         return classes_batch
 
 
-def eye_test():
+def eye_test(nlp):
     texts = [
         '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .',
 
@@ -172,21 +173,63 @@ def eye_test():
 
         'The Ruby on Rails team released versions 4.2.5.1 , 4.1.14.1 , and 3.2.22.1 of the framework last week '
         'to address multiple issues in Rails and rails - html - sanitizer , a Ruby gem that sanitizes HTML input .',
+
+
+        "Google will be dropping its own implementation of Java 's APIs in Android N in favour of the open-source OpenJDK .",
+
+        "Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers .",
+
+        "Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program .",
+
+        "Adobe has also released version 21.0.0.176 of AIR Desktop Runtime , AIR SDK , "
+        "AIR SDK & Compiler and AIR for Android , which contain Flash Player components .",
+
     ]
+
     trues = [
         'B O O O O O B O O O B I I I O',
         'O O B I O O O B I O O B O O O O O B O O O O B I O',
         'O B I O O O O O O O O B O O O O O B I I I O B O O O O O O O O O O O',
         'B I O O O O B I O O B O O B O O O O O O O O B O O O O O O O O',
         'O B I I O O O O O O O O O O O O O O O O O O O B O B I I I I O O B O O O B O O',
+        '',
+        '',
+        '',
+        '',
     ]
-    prepared_texts = [np.array(text.split()) for text in texts]
 
+    texts2 = [
+        "Google will be dropping its own implementation of Java's APIs in Android N in favour of the open-source OpenJDK."
+        "Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers."
+        , "Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program."
+        , "Microsoft has announced a new pricing model for its Visual Studio platform."
+        , "Adobe has also released version 21.0.0.176 of AIR Desktop Runtime, AIR SDK, AIR SDK & Compiler and AIR for Android, which contain Flash Player components."
+        , "Beginning with iOS 8, iPhones, iPads, and iPad, Touches are encrypted using a key derived from the user-selected passcode."
+        , "Yesterday, Microsoft capitulated and  started publishing changelogs  and  release information  for Windows 10 patches."
+        , "Microsoft has updated Visual Studio Taco (Tools for Apache Cordova), keying in on error-reporting and project-template improvements."
+        , "An anonymous reader writes:  Ubuntu 16.04 LTS and newer will  no longer be supporting AMD's widely-used Catalyst Linux (fglrx) driver ."
+        , "China's Tencent has pulled out of Windows Phone development and has criticised Microsoft's commitment to the platform."
+        , "Apple's  trendy Swift language  is getting a Web framework inspired by the popular  Ruby on Rails  MVC framework."
+        , "The Ruby on Rails team released versions 4.2.5.1, 4.1.14.1, and 3.2.22.1 of the framework last week to address multiple issues in Rails and rails-html-sanitizer, a Ruby gem that sanitizes HTML input."
+        , "Ruby on Rails fixed six vulnerabilities in versions 3.x, 4.1.x, 4.2.x, and Rails 5.0 beta and three in rails-html-sanitizer"
+        "PyPy applications can now be embedded within a C program, allowing developers to use both C and Python, regardless of which language they're most comfortable with."
+        , "PyPy 5.0 also has an upgraded C-level API so that Python scripts using C components (for example, by way of  Cython ) are both more compatible and faster."
+        , "Objective C has fallen out of the top ten most popular coding languages for the first time in five years, according to the Tiobe index."
+        , "Node.js Foundation just released v.4 of it's popular platform – containing the latest version of Javascript's V8 engine + support for all ARM processors."
+    ]
+
+    prepared_texts = [nlp(text)[:] for text in texts]
     for i, (text, true, pred) in enumerate(zip(texts, trues, net.predict_batch(prepared_texts))):
         print('#{}'.format(i))
         print('text:', text)
-        print('pred:', pred.tolist())
-        print('true:', true)
+        print('pred:', pred)
+        print('true: ', true)
+
+    prepared_texts = [nlp(text)[:] for text in texts2]
+    for i, (text, pred) in enumerate(zip(texts2, net.predict_batch(prepared_texts))):
+        print('#{}'.format(i))
+        print('text:', text)
+        print('pred:', pred)
 
 
 def train(net):
@@ -217,18 +260,20 @@ if __name__ == "__main__":
 
     vector_length = 30000
     batch_size = 16
-    model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
-    # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
 
+    from experiments.main_pipeline import load_nlp, load_default_ner_net
     from spacy.en import English
     nlp = English()
-    tags = CategoricalTags(('O', 'I', 'B'))
-    vocab_path = 'models/encoder_vocab_{}gram_{}len.bin'.format(3, vector_length)
-    encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, vocab_path)
+    # nlp = load_nlp()
+    net = load_default_ner_net(nlp, batch_size)
 
-    # Loading model
-    net = NERNet.from_model_file(encoder, model_path, batch_size)
+    # tags = CategoricalTags(('O', 'I', 'B'))
+    # vocab_path = 'models/encoder_vocab_{}gram_{}len.bin'.format(3, vector_length)
+    # encoder = LetterNGramEncoder.from_vocab_file(nlp, tags)
+    # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
+    # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
+    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size)
 
     # train(net)
-    eye_test()
+    eye_test(nlp)
 
