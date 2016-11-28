@@ -1,59 +1,32 @@
 import logging as log
 import numpy as np
+from itertools import cycle
 import re
-import json
-from itertools import cycle, islice
-from spacy.tokens import Span
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
 from keras.callbacks import ModelCheckpoint, TensorBoard
 from experiments.data_common import *
-from experiments.ner_tagging.data_prep import data_gen
+from experiments.ner_tagging.data_prep import build_encoder
+from experiments.ner_tagging.preprocessor import NERPreprocessor
 
 
 class NERNet:
-    def __init__(self, x_len, timesteps=None, batch_size=1, nbclasses=3, path_to_model=None):
-        self.x_len = x_len
+    def __init__(self, encoder, timesteps, nbclasses, batch_size=8, path_to_model=None):
+        self.x_len = encoder.vector_length
         self.batch_size = batch_size
         self.nbclasses = nbclasses
         self.timesteps = timesteps
+        self.encoder = encoder
         self.model = None
 
-        data_thing, encoder = data_gen(vector_length=self.x_len)
-        self.encoder = encoder
-        self._data_thing = data_thing
-        self.padder = Padding(pad_to_length=self.timesteps)
+        self.padder = Padding(pad_to_length=timesteps)
         self.batcher = BatchMaker(self.batch_size)
 
-        self.data()
         if path_to_model:
+            # todo: check encoder vector_length and model input length; and check timesteps
             self.load_model(path_to_model)
         else:
             self.compile_model()
-
-    def data(self, splits=(0.1, 0.2, 0.7)):
-        data_length = len(self._data_thing)
-        edges = split_range(data_length, self.batch_size, splits)
-        self.data_splits = []
-
-        for a, b in edges:
-            data_split_gen_func = None
-            if self.timesteps:
-                def data_split():
-                    return self.batcher.batch_transposed(self.padder(
-                        self.encoder(islice(self._data_thing.objects(), a, b))))
-                data_split_gen_func = data_split
-            else:
-                def data_split():
-                    return self.batcher.batch_transposed(
-                        self.encoder(islice(self._data_thing.objects(), a, b)))
-                data_split_gen_func = data_split
-
-            self.data_splits.append(cycle_uncached(data_split_gen_func))
-
-        self.data_val = self.data_splits[0]
-        self.data_test = self.data_splits[1]
-        self.data_train = self.data_splits[2]
 
     def compile_model(self):
         # architecture is from the paper
@@ -73,12 +46,24 @@ class NERNet:
         m.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')
         self.model = m
 
-    def train(self, epochs, epoch_size, nb_val_samples=1024,
+    def _make_data_gen(self, data_gen, do_infinite=True):
+        # Cycling for keras
+        if do_infinite: data_gen = cycle(data_gen)
+
+        data_gen = self.encoder(data_gen)
+        if self.timesteps:
+            data_gen = self.padder(data_gen)
+        return self.batcher.batch_transposed(data_gen)
+
+    def train(self, data_train_gen, epochs, epoch_size,
+              data_val_gen, nb_val_samples,
               save_epoch_models=True, dir_for_models='./models',
               log_for_tensorboard=True, dir_for_logs='./logs'):
         """Train model, maybe with checkpoints for every epoch and logging for tensorboard"""
         log.info('NERNet: Training...')
 
+        data_train = self._make_data_gen(data_train_gen)
+        data_val = self._make_data_gen(data_val_gen)
         callbacks = []
         # ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2)
 
@@ -90,10 +75,10 @@ class NERNet:
             tb_cb = TensorBoard(log_dir=dir_for_logs, histogram_freq=1, write_graph=True, write_images=False)
             callbacks.append(tb_cb)
 
-        return self.model.fit_generator(self.data_train,
+        return self.model.fit_generator(data_train,
                                         samples_per_epoch=epoch_size, nb_epoch=epochs,
                                         max_q_size=2,
-                                        validation_data=self.data_val, nb_val_samples=nb_val_samples,
+                                        validation_data=data_val, nb_val_samples=nb_val_samples,
                                         callbacks=callbacks
                                         )
 
@@ -106,10 +91,10 @@ class NERNet:
         self.model = load_model(path)
         log.info('NERNet: Loaded model.')
 
-    # todo: ValueError: generator already executing (e.g. when executing after training)
-    def evaluate(self, nb_val_samples):
+    def evaluate(self, data_gen, nb_val_samples):
         log.info('NERNet: Evaluating...')
-        return self.model.evaluate_generator(self.data_val, max_q_size=2, val_samples=nb_val_samples)
+        data_val = self._make_data_gen(data_gen)
+        return self.model.evaluate_generator(data_val, max_q_size=2, val_samples=nb_val_samples)
 
     def __call__(self, doc):
         """Accepts spacy.Doc and modifies it in place (sets IOB tags for tokens)"""
@@ -190,28 +175,47 @@ def eye_test():
         print('true:', true)
 
 
+def train(net):
+    data_thing = NERPreprocessor()
+    splits = (0.1, 0.2, 0.7)
+    data_splits = split(data_thing, splits)
+    data_val = data_splits[0]
+    data_test = data_splits[1]
+    data_train = data_splits[2]
+
+    # Training
+    epoch_size = 8192
+    nbepochs = 13
+    hist = net.train(data_train, nbepochs, epoch_size, data_val, 1024)
+    print('Hisory:', hist.history)
+
+    # Saving history
+    hist_path = './logs/history_epochsize{}_epochs{}.json'.format(epoch_size, nbepochs)
+    with open(hist_path, 'w') as f:
+        import json
+        json.dump(hist.history, f)
+
+    # Evaluating
+    print('Evaluation: {}'.format(net.evaluate(data_test)))
+
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
-    # Creating new model
-    # net = NERNet(x_len=30000, batch_size=16, nbclasses=3, timesteps=150)
-    # Loading model
-    # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
+    vector_length = 30000
+    batch_size = 16
+    timesteps = 150
+    nbclasses = 3
     model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
-    net = NERNet(x_len=30000, batch_size=16, nbclasses=3, timesteps=150, path_to_model=model_path)
+    # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
 
-    # Training
-    # epoch_size = 8192
-    # nbepochs = 13
-    # hist = net.train(nbepochs, epoch_size, 1024)
-    # print('Hisory:', hist.history)
-    # Saving history
-    # hist_path = './logs/history_epochsize{}_epochs{}.json'.format(epoch_size, nbepochs)
-    # with open(hist_path, 'w') as f:
-    #     json.dump(hist.history, f)
+    from spacy.en import English
+    nlp = English()
+    encoder = build_encoder(nlp, vector_length)
 
-    # Evaluating
-    # print('Evaluation: {}'.format(net.evaluate()))
+    # Loading model
+    net = NERNet(encoder, batch_size=batch_size, nbclasses=nbclasses, timesteps=timesteps,
+                 path_to_model=model_path)
+    # train(net)
 
     eye_test()
 

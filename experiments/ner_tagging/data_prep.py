@@ -1,7 +1,5 @@
 import logging as log
-import pickle
 import os
-from itertools import islice, cycle
 from spacy.en import English
 from experiments.data_common import *
 from experiments.marking.tags import CategoricalTags
@@ -33,9 +31,7 @@ def get_corpora(root_dir_of_corpora_files='/media/Documents/datasets/OANC-GrAF/d
              '{}, symbols={}, approx. words={}'.format(total_texts, total_symbols, total_symbols/5.1))
 
 
-def make_vocab(vector_length=-1, ngram=3):
-    nlp = English()
-    log.info('Data: Loaded spacy')
+def make_vocab(nlp, vector_length=-1, ngram=3):
     raw_tags = ('O', 'I', 'B')
     tags = CategoricalTags(raw_tags)
 
@@ -47,9 +43,21 @@ def make_vocab(vector_length=-1, ngram=3):
     log.info('Data: Saved vocabulary. Vector length is {}'.format(encoder.vector_length))
 
 
-def data_gen(vector_length, ngram=3):
-    nlp = English()
-    log.info('Data: Loaded spacy')
+# todo: make one build function that tries to load vocab from default location
+def default_encoder(nlp, vocab_path=None):
+    raw_tags = ('O', 'I', 'B')
+    tags = CategoricalTags(raw_tags)
+
+    if not vocab_path:
+        ngram = 3
+        vector_length = 30000
+        vocab_path = '/home/gkirg/projects/Event-extraction/experiments/ner_tagging/' \
+                              'encoder_vocab_{}gram_{}len.bin'.format(ngram, vector_length)
+    encoder = LetterNGramEncoder(nlp, tags, path_to_saved_vocab=vocab_path)
+    return encoder
+
+
+def build_encoder(nlp, vector_length, ngram=3):
     raw_tags = ('O', 'I', 'B')
     tags = CategoricalTags(raw_tags)
 
@@ -60,52 +68,13 @@ def data_gen(vector_length, ngram=3):
                           'encoder_vocab_{}gram_{}len.bin'.format(ngram, vector_length)
 
     if os.path.isfile(possible_vocab_path):
-        data_thing = NERPreprocessor()
         # loading already processed corpora
         encoder = LetterNGramEncoder(nlp, tags, path_to_saved_vocab=possible_vocab_path,
                                      vector_length=vector_length, ngram=ngram)
         log.info('Data: Loaded vocabulary. Vector length is {}'.format(encoder.vector_length))
-        return data_thing, encoder
+        return encoder
     else:
         log.warning('Data: vocab with path {} is not found!'.format(possible_vocab_path))
-
-
-def serialize_data(iterable_data, output_path='data_encoded.bin'):
-    with open(output_path, 'wb') as f:
-        for i, data_chunk in enumerate(iterable_data):
-            log.info('serialise_data: data_chunk #{}'.format(i))
-            pickle.dump(data_chunk, f)
-
-
-def deserialize_data(file_path='data_encoded.bin'):
-    with open(file_path, 'rb') as f:
-        while True:
-            try:
-                yield pickle.load(f)
-            except EOFError:
-                break
-
-
-def deserialize_data_with_logging(file_path='data_encoded.bin'):
-    i = 0
-    with open(file_path, 'rb') as f:
-        while True:
-            try:
-                yield pickle.load(f)
-                log.info('deserialise_data: data_chunk #{}'.format(i))
-                i += 1
-            except EOFError:
-                log.info('deserialise_data: total: {}'.format(i))
-                break
-
-
-def test_serialisation(nb_items=50):
-    # iterable = ((i, i**2, i**3) for i in range(nb_items))
-    data_thing, encoder = data_gen()
-    iterable = islice(encoder(data_thing.objects()), 0, nb_items)
-    serialize_data(iterable)
-    for el in deserialize_data_with_logging():
-        print(el)
 
 
 def test_single_token(encoder, token, enc=None):
@@ -131,7 +100,10 @@ def test_print_vocab(encoder, step=1000):
 
 
 def test():
-    data_thing, encoder = data_gen(10000)
+    vector_length = 10000
+    nlp = English()
+    encoder = build_encoder(nlp, vector_length)
+    data_thing = NERPreprocessor()
 
     # test 1
     test_tokens = ['a', 'ab', 'abe', 'xxxxx', 'cat', 'aaaaaaa', 'banana', 'webinar']
@@ -153,48 +125,23 @@ def test():
     print('FINISHED')
 
 
-def test_mem():
-    """Very bad method... eats memory instantly"""
-    data_thing, encoder = data_gen(30000)
-    batch = BatchMaker(32)
-    padder = Padding(150)
-    data_fetch = data_thing.objects()
-
-    print('STARTED')
-    for i, b in enumerate(cycle(batch(padder(encoder(data_fetch))))):
-        print('test: batch #{}'.format(i))
-    print('FINISHED')
-
-
-def test_mem2():
-    data_thing, encoder = data_gen(30000)
-    batch = BatchMaker(32)
-    padder = Padding(150)
-
-    def data_split():
-        return batch(padder(
-            encoder(data_thing.objects())))
-
-    print('STARTED')
-    for i, b in enumerate(cycle_uncached(data_split)):
-        print('test: batch #{}'.format(i))
-    print('FINISHED')
-
-
 def test_shapes():
     batch_size = 16
     timesteps = 100
     x_len = 30000
     ngram = 3
 
-    data_thing, encoder = data_gen(x_len)
+    nlp = English()
+    encoder = build_encoder(nlp, vector_length=x_len, ngram=ngram)
+    data_thing = NERPreprocessor()
+
     data_fetch = encoder(data_thing._wikigold_conll())
     # path='data_encoded_wikigold_{}gram_{}len.bin'.format(ngram, x_len)
     # data_fetch = deserialize_data_with_logging(path)
 
     pad = Padding(timesteps)
     batch = BatchMaker(batch_size)
-    batched = batch(pad(data_fetch))
+    batched = batch.batch_transposed(pad(data_fetch))
 
     # for i, b in enumerate(islice(batched, 0, 5)):
     for i, b in enumerate(batched):
@@ -207,19 +154,6 @@ def test_shapes():
 
 if __name__ == '__main__':
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
+
     # test()
     test_shapes()
-    # test_serialisation()
-    # test_mem()
-
-    # data_thing, encoder = data_gen(10000)
-    # for i, item in enumerate(encoder(data_thing._wikigold_conll()), 1):
-    #     print(i)
-
-    # data_wikigold = encoder(data_thing._wikigold_conll())
-    # serialize_data(data_wikigold,
-    #                output_path='data_encoded_wikigold_{}gram_{}len.bin'.format(encoder.ngram, encoder.vector_length))
-    # data_wikiner = encoder(data_thing._wikiner_wp3())
-    # serialize_data(data_wikiner,
-    #                output_path='data_encoded_wikiner_{}gram_{}len.bin'.format(encoder.ngram, encoder.vector_length))
-
