@@ -72,7 +72,7 @@ def test_tagger_texts():
     data2 = FilesFetcher.get_texts_from_files(['../texts.txt']) # Sherlock Holmes and something else
     data3 = FilesFetcher.get_texts_from_filetree('/media/Documents/datasets/OANC-GrAF') # lots of data...
 
-    preprocessor = PreprocessTexts(nlp, min_words_in_sentence=3)
+    preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
     # encoder = PaddingEncoder(nlp, tags, 50)
 
     suspicious_ne_types=('ORG', 'PRODUCT', 'FAC', 'NORP', 'EVENT')

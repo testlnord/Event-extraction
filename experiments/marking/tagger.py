@@ -4,24 +4,11 @@ from experiments.event_with_offsets import EventOffsets
 from experiments.marking.tags import Tags
 
 
-class Tagger:
-    """Common Tagger interface. Taggers expected to return None when they can't assign tag."""
-    def __init__(self, tags: Tags):
-        self.tags = tags
-
-    def __call__(self, objs):
-        for obj in objs:
-            yield obj, self.tag(obj)
-
-    def tag(self, obj):
-        raise NotImplementedError
-
-
-class ChainTagger(Tagger):
-    """Applies provided taggers until first success."""
+class ChainTagger:
+    """Applies taggers in sequence until first success (not None tag)."""
     def __init__(self, tags):
         self.taggers = []
-        super().__init__(tags)
+        self.tags = tags
 
     def tag(self, text):
         for tagger in self.taggers:
@@ -37,10 +24,9 @@ class ChainTagger(Tagger):
         self.taggers.append(tagger)
 
 
-class DummyTagger(Tagger):
+class DummyTagger:
     def __init__(self, tags, dummy_tag=None):
-        super().__init__(tags)
-
+        self.tags = tags
         self.dummy_tag = dummy_tag
         # self.dummy_tag = self.tags.default_tag
         # if dummy_tag and self.tags.is_correct(dummy_tag):
@@ -51,11 +37,10 @@ class DummyTagger(Tagger):
         return self.dummy_tag
 
 
-#todo: suitable only for spans
-class TextUserTagger(Tagger):
+class TextUserTagger:
     def __init__(self, tags: Tags, escape_input=''):
         self.end = escape_input
-        super().__init__(tags)
+        self.tags = tags
 
     def tag(self, text):
         str_text= str(text).strip().replace('\n', ' ')
@@ -71,7 +56,7 @@ class TextUserTagger(Tagger):
 
 
 # todo: use dependency tree (or POS tags) in heuristics
-class HeuristicTagger(Tagger):
+class HeuristicTagger:
     def __init__(self, tags, nlp,
                  keyphrases=('released', 'launched', 'updated', 'unveiled',
                              # 'upgrade', 'announced', 'available', 'introduces', 'coming',
@@ -81,12 +66,11 @@ class HeuristicTagger(Tagger):
                  ),
                  min_similarity=0.6,
                  suspicious_ne_types=('ORG', 'PRODUCT', 'FAC', 'PERSON', 'NORP', 'EVENT', 'DATE', 'MONEY')):
+        self.tags = tags
         self.nlp = nlp
         self.keyphrases = [nlp(k) for k in keyphrases]
         self.min_similarity = min_similarity
         self.ne_types = suspicious_ne_types
-
-        super().__init__(tags)
 
     def _ner_match(self, tokens):
         """Returns True if any of the tokens has Named Entity type from provided in constructor list of these types"""
@@ -146,11 +130,6 @@ class HeuristicEventTagger(HeuristicTagger):
         ent1_tokens = self._extract_tokens(event.entity1_offsets, doc)
         action_tokens = self._extract_tokens(event.action_offsets, doc)
         ent2_tokens = self._extract_tokens(event.entity2_offsets, doc)
-
-        # just to check if implementation of extraction is correct
-        # log.debug('{}: ent1_tokens={}'.format(type(self).__name__, ent1_tokens))
-        # log.debug('{}: action_tokens={}'.format(type(self).__name__, action_tokens))
-        # log.debug('{}: ent2_tokens={}'.format(type(self).__name__, ent2_tokens))
 
         # now is the time to use heuristics; we apply:
         # - named entity type matcher to entity1 and entity2 (there unlikely something interesting in action)

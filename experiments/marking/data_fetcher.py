@@ -18,41 +18,26 @@ class ArticleTextFetch:
         self.downloaders = downloaders
         self.db = DatabaseHandler()
 
+    # todo:
     def get(self, only_new=True):
         """Download articles, add them to database and yield if they are not already in db """
         # article_generators = map(lambda d: d.get_articles(), self.downloaders)
 
-        # todo:
-        max_nb_subsequent_falls = 10
         for downloader in self.downloaders:
-            falls = 0
-            fall = False
-            # starting timer in async mode
-            # if timer ends: falls += 1
-            if falls >= max_nb_subsequent_falls:
-                continue
-
             for article in downloader.get_articles():
-                # resetting timer
                 res = self.db.add_article_or_get_id(article)
                 log.debug('Fetcher: add_article_or_get_id() returned {}'.format(res))
-                if only_new and False:
+                if only_new:
                     continue
 
-                yield self._texts_from_article(article)
+                for text in self._texts_from_article(article):
+                    yield text
 
     def get_old(self):
         """Yield articles from database"""
         for article in self.db.get_articles():
             for text in self._texts_from_article(article):
                 yield text
-
-    def test_get(self):
-        """Dummy testing method"""
-        for i in range(10):
-            t = 'This is a simple test dummy sentence number {}'.format(i)
-            log.debug('Fetcher: yielding: {}'.format(t))
-            yield t
 
     def _texts_from_article(self, article):
         t = []
@@ -116,8 +101,3 @@ class FileLineFetcher:
                 raw_sent = sent_and_tag[0]
                 raw_tag = sent_and_tag[1]
                 yield self.nlp(raw_sent)[:], str.strip(raw_tag)
-
-
-if __name__ == "__main__":
-    for i, path in enumerate(FilesFetcher.get_paths('/media/Documents/datasets/OANC-GrAF')):
-        print(i, path)

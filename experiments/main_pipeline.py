@@ -5,7 +5,7 @@ from spacy.en import English
 from experiments.ner_tagging.net import NERNet
 from experiments.ner_tagging.encoder import LetterNGramEncoder
 from experiments.marking.data_fetcher import ArticleTextFetch
-from experiments.marking.preprocessor import PreprocessTexts
+from experiments.marking.preprocessor import NLPPreprocessor
 from experiments.marking.tags import CategoricalTags
 from experiments.marking.tagger import HeuristicSpanTagger, TextUserTagger, ChainTagger
 from experiments.marking.encoder import SentenceEncoder
@@ -15,7 +15,6 @@ def load_nlp(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16)
     args = {}
     if path_to_vecs and path.isfile(path_to_vecs):
         def add_vectors(vocab):
-            # vocab.resize_vectors(vocab.load_vectors_from_bin_loc(open(path_to_vecs)))
             vocab.load_vectors_from_bin_loc(path_to_vecs)
 
         args['add_vectors'] = add_vectors
@@ -26,7 +25,7 @@ def load_nlp(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16)
 
     if path_to_model and path.isfile(path_to_model):
         def create_pipeline(nlp):
-            return [nlp.tagger, nlp.parser, nlp.entity, load_default_ner_net(nlp, batch_size)]
+            return [nlp.tagger, nlp.parser, nlp.entity, load_default_ner_net(batch_size=batch_size)]
 
         args['create_pipeline'] = create_pipeline
         log.info('load_nlp: adding custom entity (iob) tagger to pipeline')
@@ -35,9 +34,9 @@ def load_nlp(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16)
     return nlp
 
 
-def load_default_ner_net(nlp, batch_size=16):
+def load_default_ner_net(batch_size=16):
     tags = CategoricalTags(('O', 'I', 'B'))
-    encoder = LetterNGramEncoder.from_vocab_file(nlp, tags)
+    encoder = LetterNGramEncoder.from_vocab_file(tags)
     ner_net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size)
     return ner_net
 
@@ -48,31 +47,27 @@ def classifier_net(something): return 0
 
 # todo:
 def deploy_pipeline(nlp):
-    ner_net = load_default_ner_net(nlp)
-
     data_fetcher = ArticleTextFetch()
-    preprocessor = PreprocessTexts(nlp, min_words_in_sentence=3)
-
+    preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
+    ner_net = load_default_ner_net()
 
     # pretty ok, nothing special. anyway, data_fetch is the first defining step.
-    for texts in data_fetcher.get_old():
-        # todo: not clear interface. what are the objects, what it accepts, what yields...
-        for object in preprocessor.objects(texts):
+    for text in data_fetcher.get_old():
+        for sent in preprocessor.sents(text):
             # todo: there must be net classifier. encoder must be in the net.
-            category = classifier_net(object)
+            category = classifier_net(sent)
             if category:
-                # todo: is it really Doc? not clear
-                ner_net(object)
+                # todo: type problem with Span vs. Doc
+                ner_net(sent)
                 # todo: there is an entity extraction and construction
                 # todo: there is final step: send event to the database
                 # that's all
 
 # todo:
 def train_pipeline(nlp):
-
     data_fetcher = ArticleTextFetch() # let it be articles
-    preprocessor = PreprocessTexts(nlp, min_words_in_sentence=3)
-    ner_net = load_default_ner_net(nlp)
+    preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
+    ner_net = load_default_ner_net()
 
     raw_tags = (0, 1)
     tags = CategoricalTags(raw_tags)
@@ -83,17 +78,24 @@ def train_pipeline(nlp):
     tagger.add_tagger(tagger2)
 
     # todo: constructing classifier net with its' encoder
-    encoder = SentenceEncoder(nlp, tags, none_tag_handler=None)
+    encoder = SentenceEncoder(tags)
     classifier = classifier_net
 
     data_for_later_use = []
-    for texts in data_fetcher.get_old():
-        for object in preprocessor.objects(texts):
+    untagged_data = []
+    for text in data_fetcher.get_old():
+        for sent in preprocessor.sents(text):
+            # todo: problem with types
             ner_net(object)
-            for sent, tag in tagger.tag(object):
-                # todo: saving tagged data for later use
+
+            # todo: what if None?
+            tag = tagger.tag(sent)
+            if tag:
+                # todo: saving tagged data for later use (training)
                 data_for_later_use.append((sent, tag))
-                pass
+            else:
+                # todo: saving utagged data for later use
+                untagged_data.append(sent)
 
     for data in data_for_later_use:
         # todo: train classifier with that
@@ -121,6 +123,6 @@ if __name__ == "__main__":
     # nlp = load_nlp()
 
     nlp = English()
-    ner_net = load_default_ner_net(nlp)
+    ner_net = load_default_ner_net()
     test_nernet(nlp, ner_net)
 

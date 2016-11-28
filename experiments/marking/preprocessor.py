@@ -1,42 +1,27 @@
 import logging as log
 import json
-import numpy as np
 from spacy.en import English
-from spacy.tokens import Span
 from event import Event
 from experiments.event_with_offsets import EventOffsets
 
 
-class Preprocessor:
-    def __call__(self, texts):
-        # log.debug('Preprocessor: processing texts: {}'.format(texts))
-        for text in texts:
-            for obj in self.objects(text):
-                yield obj
-
-    def objects(self, text):
-        raise NotImplementedError
-
-
-class PreprocessTexts(Preprocessor):
+class NLPPreprocessor:
     """Splits texts on sentences; drops short sentences (meausured in words)."""
-
     def __init__(self, nlp,  min_words_in_sentence=1):
         self.min_words = min_words_in_sentence
         self.nlp = nlp
 
-    def objects(self, text: str):
+    def sents(self, text: str):
         """Yields sentences from text"""
-        log.debug('Preprocessor: processing text: {}...'.format(text[:min(200, len(text))]))
-        # replace apostrophe (&#8217;) to single quotation mark as spacy doesn't recognise it
+        # Replace apostrophe (&#8217;) to single quotation mark as spacy doesn't recognise it
         text = text.replace("’", "'")
-        for sent in self.nlp(text).sents:
-            if type(sent) is Span and len(sent) >= self.min_words:
-                # log.debug('Preprocessor: yielding sent: {}'.format(repr(sent.text.strip())))
+        doc = self.nlp(text)
+        for sent in doc.sents:
+            if len(sent) >= self.min_words:
                 yield sent
 
 
-class PreprocessJsonOpenIEExtractions(Preprocessor):
+class PreprocessJsonOpenIEExtractions:
     """Parses json representatoins of OpenIE extractions and makes events from them."""
 
     def __init__(self, nlp, nb_most_confident=1):
@@ -45,8 +30,8 @@ class PreprocessJsonOpenIEExtractions(Preprocessor):
         self.nb_most_confident = nb_most_confident
         self.nlp = nlp
 
-    def objects(self, text):
-        ces = sorted(self._parse(text), key=lambda x: x[0])
+    def events(self, json_event):
+        ces = sorted(self._parse(json_event), key=lambda x: x[0])
         last_index = len(ces) if self.nb_most_confident == -1 else min(len(ces), self.nb_most_confident)
         ces = ces[:last_index]
         for conf, ev in ces:
@@ -93,8 +78,9 @@ def test():
     nlp = English()
     preprocessor = PreprocessJsonOpenIEExtractions(nlp, 2)
     with open(path) as f:
-        for i, e in enumerate(preprocessor(f.readlines())):
-            print(i, repr(e))
+        for i, json_e in enumerate(f):
+            for e in preprocessor.events(json_e):
+                print(i, repr(e))
 
 
 if __name__ == "__main__":
