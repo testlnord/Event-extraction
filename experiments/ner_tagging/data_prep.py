@@ -1,7 +1,7 @@
 import logging as log
 import pickle
 import os
-from itertools import islice
+from itertools import islice, cycle
 from spacy.en import English
 from experiments.data_common import *
 from experiments.marking.tags import CategoricalTags
@@ -33,8 +33,21 @@ def get_corpora(root_dir_of_corpora_files='/media/Documents/datasets/OANC-GrAF/d
              '{}, symbols={}, approx. words={}'.format(total_texts, total_symbols, total_symbols/5.1))
 
 
-def data_gen(vector_length=-1, ngram=3):
-    default_vector_length = 10000
+def make_vocab(vector_length=-1, ngram=3):
+    nlp = English()
+    log.info('Data: Loaded spacy')
+    raw_tags = ('O', 'I', 'B')
+    tags = CategoricalTags(raw_tags)
+
+    # processing corpora in realtime and saving it for later use
+    corpora = get_corpora()
+    encoder = LetterNGramEncoder(nlp, tags, corpora=corpora, vector_length=vector_length, ngram=ngram)
+    log.info('Data: Saving vocabulary...')
+    encoder.save_vocab()
+    log.info('Data: Saved vocabulary. Vector length is {}'.format(encoder.vector_length))
+
+
+def data_gen(vector_length, ngram=3):
     nlp = English()
     log.info('Data: Loaded spacy')
     raw_tags = ('O', 'I', 'B')
@@ -43,27 +56,18 @@ def data_gen(vector_length=-1, ngram=3):
     # vocab extracted from Open American National Corpus - contemporary American English
     # (~15*10^6 words in dataset overall; around  9.2*10^6 words used)
     # and articles from database
-    # todo: temp
-    # len_to_load = vector_length if vector_length > 0 else default_vector_length
-    len_to_load = default_vector_length
-    possible_vocab_path = 'encoder_vocab_{}gram_{}len.bin'.format(ngram, len_to_load)
+    possible_vocab_path = '/home/gkirg/projects/Event-extraction/experiments/ner_tagging/' \
+                          'encoder_vocab_{}gram_{}len.bin'.format(ngram, vector_length)
 
-    data_thing = NERPreprocessor()
-    encoder = None
-    if os.path.exists(possible_vocab_path):
+    if os.path.isfile(possible_vocab_path):
+        data_thing = NERPreprocessor()
         # loading already processed corpora
         encoder = LetterNGramEncoder(nlp, tags, path_to_saved_vocab=possible_vocab_path,
                                      vector_length=vector_length, ngram=ngram)
         log.info('Data: Loaded vocabulary. Vector length is {}'.format(encoder.vector_length))
+        return data_thing, encoder
     else:
-        # processing corpora in realtime and saving it for later use
-        corpora = get_corpora()
-        encoder = LetterNGramEncoder(nlp, tags, corpora=corpora, vector_length=vector_length, ngram=ngram)
-        log.info('Data: Saving vocabulary...')
-        encoder.save_vocab()
-        log.info('Data: Saved vocabulary. Vector length is {}'.format(encoder.vector_length))
-
-    return data_thing, encoder
+        log.warning('Data: vocab with path {} is not found!'.format(possible_vocab_path))
 
 
 def serialize_data(iterable_data, output_path='data_encoded.bin'):
@@ -128,7 +132,6 @@ def test_print_vocab(encoder, step=1000):
 
 def test():
     data_thing, encoder = data_gen(10000)
-    # test_print_vocab(encoder)
 
     # test 1
     test_tokens = ['a', 'ab', 'abe', 'xxxxx', 'cat', 'aaaaaaa', 'banana', 'webinar']
@@ -136,9 +139,7 @@ def test():
         test_single_token(encoder, token)
 
     # test 2
-    # data_fetch = data_thing._wikigold_conll()
     data_fetch = data_thing.objects()
-    # start = 65536
     start = 0
     end = 131072
     print('STARTED')
@@ -146,30 +147,47 @@ def test():
         print('test: encoding #{}'.format(i), sent)
         tags_enc = np.array(encoder.encode_tags(tags))
         sent_enc = np.array(encoder.encode_text(sent))
-        # print(sent)
+
         # for token, token_enc in zip(sent, sent_enc):
         #     test_single_token(encoder, token, token_enc)
     print('FINISHED')
 
 
-def test_gen():
-    data_thing, encoder = data_gen(10000)
-    data_fetch = encoder(data_thing.objects())
+def test_mem():
+    """Very bad method... eats memory instantly"""
+    data_thing, encoder = data_gen(30000)
+    batch = BatchMaker(32)
+    padder = Padding(150)
     data_fetch = data_thing.objects()
 
-    slice_size = 10
-    for i in range(1, 5):
-        for j, (sent, tag) in enumerate(islice(data_fetch, 0, slice_size)):
-            print(i, j, sent)
+    print('STARTED')
+    for i, b in enumerate(cycle(batch(padder(encoder(data_fetch))))):
+        print('test: batch #{}'.format(i))
+    print('FINISHED')
+
+
+def test_mem2():
+    data_thing, encoder = data_gen(30000)
+    batch = BatchMaker(32)
+    padder = Padding(150)
+
+    def data_split():
+        return batch(padder(
+            encoder(data_thing.objects())))
+
+    print('STARTED')
+    for i, b in enumerate(cycle_uncached(data_split)):
+        print('test: batch #{}'.format(i))
+    print('FINISHED')
 
 
 def test_shapes():
     batch_size = 16
     timesteps = 100
-    x_len = 10000
+    x_len = 30000
     ngram = 3
 
-    data_thing, encoder = data_gen(10000)
+    data_thing, encoder = data_gen(x_len)
     data_fetch = encoder(data_thing._wikigold_conll())
     # path='data_encoded_wikigold_{}gram_{}len.bin'.format(ngram, x_len)
     # data_fetch = deserialize_data_with_logging(path)
@@ -189,10 +207,10 @@ def test_shapes():
 
 if __name__ == '__main__':
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
-    test_shapes()
     # test()
+    test_shapes()
     # test_serialisation()
-    # test_gen()
+    # test_mem()
 
     # data_thing, encoder = data_gen(10000)
     # for i, item in enumerate(encoder(data_thing._wikigold_conll()), 1):
