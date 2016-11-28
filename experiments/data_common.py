@@ -49,30 +49,32 @@ def cycle_uncached(generator_function):
 
 
 class BatchMaker:
-    def __init__(self, batch_size, element_wise_batches=True, output_last_incomplete=True):
+    def __init__(self, batch_size, output_last_incomplete=True):
         self.batch_size = batch_size
         self.output_last_incomplete = output_last_incomplete
-        # define transformation function for output batches at construction to avoid if..else at every iteration
-        self._transform = self._transpose if element_wise_batches else self._id
 
-    def __call__(self, iterable):
-        """Yields tuples of batches (element_wise == True) or batch of tuples (element_wise == False)"""
+    def batch(self, iterable):
+        cur_batch = []
+        for elems in iterable:
+            cur_batch.append(elems)
+            if len(cur_batch) == self.batch_size:
+                yield cur_batch
+                cur_batch.clear()
+        if len(cur_batch) != 0 and self.output_last_incomplete:
+            yield cur_batch
+
+    def batch_transposed(self, iterable):
         cur_batch = []
         for elems in iterable:
             cur_batch.append(tuple(map(np.array, elems)))
             if len(cur_batch) == self.batch_size:
-                yield self._transform(cur_batch)
+                yield self._transpose(cur_batch)
                 cur_batch.clear()
-
         if len(cur_batch) != 0 and self.output_last_incomplete:
-            yield self._transform(cur_batch)
+            yield self._transpose(cur_batch)
 
     def _transpose(self, batch):
-        # in essence: res = zip(*cur_batch); and type conversions
         return list(map(np.array, zip(*batch)))
-
-    def _id(self, batch):
-        return list(map(np.array, batch))
 
 
 class Padding:
