@@ -1,32 +1,46 @@
 import logging as log
 import numpy as np
-from itertools import cycle
+import os
 import re
+from itertools import cycle
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
 from keras.callbacks import ModelCheckpoint, TensorBoard
 from experiments.data_common import *
-from experiments.ner_tagging.data_prep import build_encoder
+from experiments.marking.tags import CategoricalTags
 from experiments.ner_tagging.preprocessor import NERPreprocessor
+from experiments.ner_tagging.encoder import LetterNGramEncoder
 
 
 class NERNet:
-    def __init__(self, encoder, timesteps, nbclasses, batch_size=8, path_to_model=None):
+    def __init__(self, encoder, timesteps, batch_size=8):
         self.x_len = encoder.vector_length
         self.batch_size = batch_size
-        self.nbclasses = nbclasses
+        self.nbclasses = encoder.tags.nbtags
         self.timesteps = timesteps
-        self.encoder = encoder
-        self.model = None
+        self._encoder = encoder
+        self._model = None
 
         self.padder = Padding(pad_to_length=timesteps)
         self.batcher = BatchMaker(self.batch_size)
 
-        if path_to_model:
-            # todo: check encoder vector_length and model input length; and check timesteps
-            self.load_model(path_to_model)
-        else:
-            self.compile_model()
+    @classmethod
+    def from_model_file(cls, encoder, model_path=None, batch_size=8):
+        if not model_path:
+            model_dir = os.path.join(os.path.dirname(__file__), 'models')
+            model_name = 'nernet_model_full_default.h5'
+            model_path = os.path.join(model_dir, model_name)
+
+        model = load_model(model_path)
+        _, timesteps, x_len = model.layers[0].input_shape
+
+        if x_len != encoder.vector_length:
+            raise ValueError('NERNet: encoder.vector_length is not consistent with the input of '
+                             'loaded model ({} != {})'.format(encoder.vector_length, x_len))
+
+        net = cls(encoder, timesteps, batch_size)
+        net._model = model
+        return net
 
     def compile_model(self):
         # architecture is from the paper
@@ -44,13 +58,13 @@ class NERNet:
         m.add(TimeDistributed(Dense(self.nbclasses, activation='softmax')))
 
         m.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')
-        self.model = m
+        self._model = m
 
     def _make_data_gen(self, data_gen, do_infinite=True):
         # Cycling for keras
         if do_infinite: data_gen = cycle(data_gen)
 
-        data_gen = self.encoder(data_gen)
+        data_gen = self._encoder(data_gen)
         if self.timesteps:
             data_gen = self.padder(data_gen)
         return self.batcher.batch_transposed(data_gen)
@@ -75,26 +89,26 @@ class NERNet:
             tb_cb = TensorBoard(log_dir=dir_for_logs, histogram_freq=1, write_graph=True, write_images=False)
             callbacks.append(tb_cb)
 
-        return self.model.fit_generator(data_train,
-                                        samples_per_epoch=epoch_size, nb_epoch=epochs,
-                                        max_q_size=2,
-                                        validation_data=data_val, nb_val_samples=nb_val_samples,
-                                        callbacks=callbacks
-                                        )
+        return self._model.fit_generator(data_train,
+                                         samples_per_epoch=epoch_size, nb_epoch=epochs,
+                                         max_q_size=2,
+                                         validation_data=data_val, nb_val_samples=nb_val_samples,
+                                         callbacks=callbacks
+                                         )
 
     def save_model(self, path):
-        self.model.save(path)
+        self._model.save(path)
 
     def load_model(self, path):
         log.info('NERNet: Loading model ({})...'.format(path))
-        del self.model
-        self.model = load_model(path)
+        del self._model
+        self._model = load_model(path)
         log.info('NERNet: Loaded model.')
 
     def evaluate(self, data_gen, nb_val_samples):
         log.info('NERNet: Evaluating...')
         data_val = self._make_data_gen(data_gen)
-        return self.model.evaluate_generator(data_val, max_q_size=2, val_samples=nb_val_samples)
+        return self._model.evaluate_generator(data_val, max_q_size=2, val_samples=nb_val_samples)
 
     def __call__(self, doc):
         """Accepts spacy.Doc and modifies it in place (sets IOB tags for tokens)"""
@@ -133,11 +147,11 @@ class NERNet:
 
     def predict_batch(self, tokenized_texts):
         orig_lengths = [len(ttext) for ttext in tokenized_texts]
-        texts_enc = [self.padder.pad(self.encoder.encode_text(ttext))[0] for ttext in tokenized_texts]
+        texts_enc = [self.padder.pad(self._encoder.encode_text(ttext))[0] for ttext in tokenized_texts]
         x = np.array(texts_enc)
         batch_size = len(x)
 
-        classes_batch = self.model.predict_classes(x, batch_size=batch_size)
+        classes_batch = self._model.predict_classes(x, batch_size=batch_size)
         # cut to original lengths
         classes_batch = [classes[:orig_length] for orig_length, classes in zip(orig_lengths, classes_batch)]
         return classes_batch
@@ -203,21 +217,18 @@ if __name__ == "__main__":
 
     vector_length = 30000
     batch_size = 16
-    timesteps = 150
-    nbclasses = 3
     model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
     # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
 
     from spacy.en import English
     nlp = English()
-    encoder = build_encoder(nlp, vector_length)
+    tags = CategoricalTags(('O', 'I', 'B'))
+    vocab_path = 'models/encoder_vocab_{}gram_{}len.bin'.format(3, vector_length)
+    encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, vocab_path)
 
     # Loading model
-    net = NERNet(encoder, batch_size=batch_size, nbclasses=nbclasses, timesteps=timesteps,
-                 path_to_model=model_path)
+    net = NERNet.from_model_file(encoder, model_path, batch_size)
+
     # train(net)
-
     eye_test()
-
-
 

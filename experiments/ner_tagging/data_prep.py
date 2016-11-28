@@ -1,5 +1,4 @@
 import logging as log
-import os
 from spacy.en import English
 from experiments.data_common import *
 from experiments.marking.tags import CategoricalTags
@@ -31,50 +30,17 @@ def get_corpora(root_dir_of_corpora_files='/media/Documents/datasets/OANC-GrAF/d
              '{}, symbols={}, approx. words={}'.format(total_texts, total_symbols, total_symbols/5.1))
 
 
-def make_vocab(nlp, vector_length=-1, ngram=3):
-    raw_tags = ('O', 'I', 'B')
+def make_vocab(nlp, vector_length=-1, ngram=3, raw_tags=('O', 'I', 'B')):
+    """Make vocabulary for LetterNGramEncoder"""
     tags = CategoricalTags(raw_tags)
 
     # processing corpora in realtime and saving it for later use
     corpora = get_corpora()
-    encoder = LetterNGramEncoder(nlp, tags, corpora=corpora, vector_length=vector_length, ngram=ngram)
+    encoder = LetterNGramEncoder(nlp, tags, ngram=ngram)
+    encoder.train(corpora, vector_length)
     log.info('Data: Saving vocabulary...')
     encoder.save_vocab()
     log.info('Data: Saved vocabulary. Vector length is {}'.format(encoder.vector_length))
-
-
-# todo: make one build function that tries to load vocab from default location
-def default_encoder(nlp, vocab_path=None):
-    raw_tags = ('O', 'I', 'B')
-    tags = CategoricalTags(raw_tags)
-
-    if not vocab_path:
-        ngram = 3
-        vector_length = 30000
-        vocab_path = '/home/gkirg/projects/Event-extraction/experiments/ner_tagging/' \
-                              'encoder_vocab_{}gram_{}len.bin'.format(ngram, vector_length)
-    encoder = LetterNGramEncoder(nlp, tags, path_to_saved_vocab=vocab_path)
-    return encoder
-
-
-def build_encoder(nlp, vector_length, ngram=3):
-    raw_tags = ('O', 'I', 'B')
-    tags = CategoricalTags(raw_tags)
-
-    # vocab extracted from Open American National Corpus - contemporary American English
-    # (~15*10^6 words in dataset overall; around  9.2*10^6 words used)
-    # and articles from database
-    possible_vocab_path = '/home/gkirg/projects/Event-extraction/experiments/ner_tagging/' \
-                          'encoder_vocab_{}gram_{}len.bin'.format(ngram, vector_length)
-
-    if os.path.isfile(possible_vocab_path):
-        # loading already processed corpora
-        encoder = LetterNGramEncoder(nlp, tags, path_to_saved_vocab=possible_vocab_path,
-                                     vector_length=vector_length, ngram=ngram)
-        log.info('Data: Loaded vocabulary. Vector length is {}'.format(encoder.vector_length))
-        return encoder
-    else:
-        log.warning('Data: vocab with path {} is not found!'.format(possible_vocab_path))
 
 
 def test_single_token(encoder, token, enc=None):
@@ -100,9 +66,10 @@ def test_print_vocab(encoder, step=1000):
 
 
 def test():
-    vector_length = 10000
+    x_len = 10000
     nlp = English()
-    encoder = build_encoder(nlp, vector_length)
+    tags = CategoricalTags(('O', 'I', 'B'))
+    encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, force_vector_length=x_len)
     data_thing = NERPreprocessor()
 
     # test 1
@@ -132,7 +99,8 @@ def test_shapes():
     ngram = 3
 
     nlp = English()
-    encoder = build_encoder(nlp, vector_length=x_len, ngram=ngram)
+    tags = CategoricalTags(('O', 'I', 'B'))
+    encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, force_vector_length=x_len)
     data_thing = NERPreprocessor()
 
     data_fetch = encoder(data_thing._wikigold_conll())

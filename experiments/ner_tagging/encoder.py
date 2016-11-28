@@ -1,39 +1,47 @@
+import logging as log
+import os
 import pickle
 from collections import Counter
 from experiments.marking.encoder import Encoder
-from experiments.marking.tags import Tags
+from experiments.marking.tags import Tags, CategoricalTags
 
 
 class LetterNGramEncoder(Encoder):
-    def __init__(self, nlp, tags: Tags, corpora=None, vector_length=-1, ngram=3, dummy_char='^',
-                 path_to_saved_vocab=None):
-        """Instantiate encoder using raw text corpora or serialised vocab.
-
-        Args:
-            corpora: iterable of raw texts (str) for building vocabulary
-            path_to_saved_vocab: load serialised vocabulary instead of processing corpora
-            vector_length: length of the encodings (i.e. result vectors)
-            ngram: use that number of symbols in ngram (default 3)
-            dummy_char: symbol to use for extending tokens (e.g. when dummy_char='#': 'word' becames '#word#')
+    def __init__(self, nlp, tags: Tags, ngram=3, dummy_char='^'):
         """
-
+        :param nlp: spacy Language instance
+        :param tags: tags for encoding
+        :param ngram: use that number of symbols in ngram (default 3)
+        :param dummy_char: symbol to use for extending tokens (e.g. when dummy_char='#': 'word' becames '#word#')
+        """
         super().__init__(nlp, tags)
 
-        # additional features about uppercase and wordvectors (see 'encode_token' method)
+        # Additional features about uppercase and wordvectors (see 'encode_token' method)
         self.nb_other_features = self.nlp.vocab.vectors_length + 5
         self.ngram = ngram
         self.dummy_char = dummy_char
 
-        if path_to_saved_vocab:
-            self.load_vocab(path_to_saved_vocab, vector_length)
-        elif corpora:
-            self.train(corpora, vector_length)
+    @classmethod
+    def from_vocab_file(cls, nlp, tags, vocab_path=None, force_vector_length=-1):
+        # Determine path of the vocabulary
+        vocab_dir = os.path.join(os.path.dirname(__file__), 'models')
+        if not vocab_path:
+            vocab_name = 'encoder_vocab_default.bin'
+            vocab_path = os.path.join(vocab_dir, vocab_name)
+
+        # Construct encoder and load vocabulary
+        if vocab_path and os.path.isfile(vocab_path):
+            encoder = cls(nlp, tags)
+            encoder.load_vocab(vocab_path, force_vector_length)
+            log.info('LetterNGramEncoder: Loaded vocabulary. Vector length is {}'.format(encoder.vector_length))
+            return encoder
+
+        raise ('LetterNGramEncoder: vocab with path {} is not found. Cannot construct encoder'.format(vocab_path))
 
     def encode(self, text, tags):
         sent_enc = self.encode_text(text)
         tags_enc = self.encode_tags(tags)
         return sent_enc, tags_enc
-        # return np.array(sent_enc), np.array(tags_enc)
 
     def encode_tags(self, raw_tags):
         return [self.tags.encode(raw_tag) for raw_tag in raw_tags]
@@ -43,8 +51,6 @@ class LetterNGramEncoder(Encoder):
 
     def encode_text(self, text):
         return [self.encode_token(token) for token in text]
-        # return [self.nlp(str(token)).vector for token in text]
-        # todo: remove that!
 
     def encode_token(self, token):
         t = str(token)
@@ -79,9 +85,15 @@ class LetterNGramEncoder(Encoder):
 
         return encoded
 
-    def train(self, corpora, vector_length=-1):
+    def train(self, corpora_iterable, vector_length=-1):
+        """
+        Train encoder on corpora (i.e. collect most frequent ngrams from corpora)
+        :param corpora_iterable: iterable of raw texts (str) for building vocabulary
+        :param vector_length: length of the encodings (i.e. result vectors)
+        :return: None
+        """
         raw_vocab = Counter()
-        for text in corpora:
+        for text in corpora_iterable:
             doc = self.nlp(text, tag=False, entity=False, parse=False)
             for i, token in enumerate(doc):
                 t = token.text.lower()
