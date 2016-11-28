@@ -69,9 +69,7 @@ class NERNet:
         # Cycling for keras
         if do_infinite: data_gen = cycle(data_gen)
 
-        data_gen = self._encoder(data_gen)
-        if self.timesteps:
-            data_gen = self.padder(data_gen)
+        data_gen = self.padder(self._encoder(data_gen))
         return self.batcher.batch_transposed(data_gen)
 
     def train(self, data_train_gen, epochs, epoch_size,
@@ -148,7 +146,8 @@ class NERNet:
 
     def predict_batch(self, tokenized_texts):
         orig_lengths = [len(ttext) for ttext in tokenized_texts]
-        texts_enc = [self.padder.pad(self._encoder.encode_text(ttext))[0] for ttext in tokenized_texts]
+        texts_enc = [self.padder.pad(self._encoder.encode_data(ttext))[0] for ttext in tokenized_texts]
+        # texts_enc = list(self.padder(tuple(self._encoder(tokenized_texts))))
         x = np.array(texts_enc)
         batch_size = len(x)
 
@@ -255,6 +254,7 @@ def train(net):
     # Evaluating
     print('Evaluation: {}'.format(net.evaluate(data_test)))
 
+
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     from spacy.en import English
     nlp = English()
     # nlp = load_nlp()
-    net = load_default_ner_net(nlp, batch_size)
+    net = load_default_ner_net(batch_size=batch_size)
 
     # tags = CategoricalTags(('O', 'I', 'B'))
     # vocab_path = 'models/encoder_vocab_{}gram_{}len.bin'.format(3, vector_length)

@@ -2,27 +2,26 @@ import logging as log
 import os
 import pickle
 from collections import Counter
-from experiments.marking.encoder import Encoder
+from spacy.tokens import Span
 from experiments.marking.tags import Tags, CategoricalTags
+from experiments.marking.abstract_encoder import Encoder
 
 
 class LetterNGramEncoder(Encoder):
-    def __init__(self, nlp, tags: Tags, ngram=3, dummy_char='^'):
+    def __init__(self, tags: Tags, ngram=3, word_vectors_length=300):
         """
-        :param nlp: spacy Language instance
         :param tags: tags for encoding
         :param ngram: use that number of symbols in ngram (default 3)
-        :param dummy_char: symbol to use for extending tokens (e.g. when dummy_char='#': 'word' becames '#word#')
         """
-        super().__init__(nlp, tags)
-
         # Additional features about uppercase and wordvectors (see 'encode_token' method)
-        self.nb_other_features = self.nlp.vocab.vectors_length + 5
+        self.tags = tags
+        self.nb_other_features = word_vectors_length + 5
         self.ngram = ngram
-        self.dummy_char = dummy_char
+        # Use some rare symbol - don't change that to keep consistency with old trained vocabs
+        self.dummy_char = '^'
 
     @classmethod
-    def from_vocab_file(cls, nlp, tags, vocab_path=None, force_vector_length=-1):
+    def from_vocab_file(cls, tags: Tags, vocab_path=None, force_vector_length=-1, word_vectors_length=300):
         # Determine path of the vocabulary
         vocab_dir = os.path.join(os.path.dirname(__file__), 'models')
         if not vocab_path:
@@ -31,17 +30,12 @@ class LetterNGramEncoder(Encoder):
 
         # Construct encoder and load vocabulary
         if vocab_path and os.path.isfile(vocab_path):
-            encoder = cls(nlp, tags)
+            encoder = cls(tags, word_vectors_length=word_vectors_length)
             encoder.load_vocab(vocab_path, force_vector_length)
             log.info('LetterNGramEncoder: Loaded vocabulary. Vector length is {}'.format(encoder.vector_length))
             return encoder
 
         raise ('LetterNGramEncoder: vocab with path {} is not found. Cannot construct encoder'.format(vocab_path))
-
-    def encode(self, text, tags):
-        sent_enc = self.encode_text(text)
-        tags_enc = self.encode_tags(tags)
-        return sent_enc, tags_enc
 
     def encode_tags(self, raw_tags):
         return [self.tags.encode(raw_tag) for raw_tag in raw_tags]
@@ -49,7 +43,7 @@ class LetterNGramEncoder(Encoder):
     def decode_tags(self, tags_encoded):
         return [self.tags.decode(tag_enc) for tag_enc in tags_encoded]
 
-    def encode_text(self, text):
+    def encode_data(self, text: Span):
         return [self.encode_token(token) for token in text]
 
     def encode_token(self, token):
@@ -67,8 +61,7 @@ class LetterNGramEncoder(Encoder):
         # adding other features
 
         # adding word embedding - pretty useful information
-        t_spacied = self.nlp(t, tag=False, entity=False, parse=False)
-        encoded.extend(t_spacied.vector)
+        encoded.extend(token.vector)
 
         # preserving information about uppercase
         upmask = [int(c.isupper()) for c in t]
@@ -85,19 +78,17 @@ class LetterNGramEncoder(Encoder):
 
         return encoded
 
-    def train(self, corpora_iterable, vector_length=-1):
+    def train(self, corpora, vector_length=-1):
         """
         Train encoder on corpora (i.e. collect most frequent ngrams from corpora)
-        :param corpora_iterable: iterable of raw texts (str) for building vocabulary
-        :param vector_length: length of the encodings (i.e. result vectors)
+        :param corpora: iterable of words for building vocabulary
+        :param vector_length: length of the encodings (i.e. result vectors), if -1 then keep all ngrams
         :return: None
         """
         raw_vocab = Counter()
-        for text in corpora_iterable:
-            doc = self.nlp(text, tag=False, entity=False, parse=False)
-            for i, token in enumerate(doc):
-                t = token.text.lower()
-                raw_vocab += Counter(self.ngrams(t))
+        for i, token in enumerate(corpora):
+            t = token.text.lower()
+            raw_vocab += Counter(self.ngrams(t))
 
         self.vocab = list(map(lambda item: item[0], raw_vocab.most_common()))
         self.set_vector_length(vector_length)
@@ -149,19 +140,3 @@ class LetterNGramEncoder(Encoder):
             pad_value = self.dummy_char * self.ngram
             self.vocab.extend([pad_value] * nb_pad_values)
             self._vector_length = vector_length
-
-
-if __name__ == '__main__':
-    # testing tag encoding and decoding
-    from spacy.en import English
-    from experiments.marking.tags import CategoricalTags
-    raw_tags = ('O', 'I', 'B')
-    encoder = LetterNGramEncoder(English(), CategoricalTags(raw_tags))
-
-    truth = 'B O B O O O B B I O B I I I O'.split()
-    print('Original:', truth)
-    enc = encoder.encode_tags(truth)
-    dec = encoder.decode_tags(enc)
-    print(' Decoded:', dec)
-    print(' Encoded:', enc)
-    assert all(x == y for x, y in zip(truth, dec))
