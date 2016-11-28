@@ -1,8 +1,9 @@
 import logging as log
+from itertools import islice
 import numpy as np
 
 
-def split_range(length, batch_size, splits):
+def split_range(length, splits, batch_size=1):
     """Splits range of length=length to subranges of size even to batch_size
     and returns indexes of that subranges in the original range"""
     l = length
@@ -25,11 +26,11 @@ def split_range(length, batch_size, splits):
     return edges
 
 
-def split(slicible, batch_size, splits):
+def split(slicible, splits, batch_size=1):
     """Split something on len(splits) parts with sizes proportional values in splits.
     Sizes of the parts will be multiples of batch_size."""
     edges = split(len(slicible), batch_size, splits)
-    subsets = [slicible[a:b] for a, b in edges]
+    subsets = [islice(slicible, a, b) for a, b in edges]
     return subsets
 
 
