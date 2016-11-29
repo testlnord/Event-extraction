@@ -11,7 +11,7 @@ from experiments.marking.tagger import HeuristicSpanTagger, TextUserTagger, Chai
 from experiments.marking.encoder import SentenceEncoder
 
 
-def load_nlp(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16):
+def load_nlp2(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16):
     args = {}
     if path_to_vecs and path.isfile(path_to_vecs):
         def add_vectors(vocab):
@@ -25,12 +25,20 @@ def load_nlp(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16)
 
     if path_to_model and path.isfile(path_to_model):
         def create_pipeline(nlp):
-            return [nlp.tagger, nlp.parser, nlp.entity, load_default_ner_net(batch_size=batch_size)]
-
+            ner_net = load_default_ner_net(batch_size=batch_size)
+            return [nlp.tagger, nlp.parser, nlp.entity, ner_net]
         args['create_pipeline'] = create_pipeline
         log.info('load_nlp: adding custom entity (iob) tagger to pipeline')
 
     nlp = spacy.load(lang_id, **args)
+    return nlp
+
+
+def load_nlp(path_to_model=None, batch_size=16):
+    nlp = English()
+    ner_net = load_default_ner_net(batch_size=batch_size)
+    nlp.pipeline.append(ner_net)
+    log.info('load_nlp: adding custom entity (iob) tagger to pipeline')
     return nlp
 
 
@@ -57,11 +65,10 @@ def deploy_pipeline(nlp):
             # todo: there must be net classifier. encoder must be in the net.
             category = classifier_net(sent)
             if category:
-                # todo: type problem with Span vs. Doc
-                ner_net(sent)
                 # todo: there is an entity extraction and construction
                 # todo: there is final step: send event to the database
                 # that's all
+                pass
 
 # todo:
 def train_pipeline(nlp):
@@ -102,11 +109,10 @@ def train_pipeline(nlp):
         pass
 
 
-def test_nernet(nlp, ner_net):
+def test_nernet(nlp):
     with open('samples.txt') as f:
         log.info('Test NERNet: making doc...')
         doc = nlp(f.read())
-        ner_net(doc)
         log.info('Test NERNet: made doc')
 
         for n, sent in enumerate(doc.sents):
@@ -118,11 +124,9 @@ def test_nernet(nlp, ner_net):
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
-    # path_to_vecs = '/media/Documents/datasets/word_vecs/glove.840B.300d.bin'
-    # model_path = 'ner_tagging/models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
-    # nlp = load_nlp()
+    path_to_vecs = '/media/Documents/datasets/word_vecs/glove.840B.300d.bin'
+    # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
 
-    nlp = English()
-    ner_net = load_default_ner_net()
-    test_nernet(nlp, ner_net)
+    nlp = load_nlp()
+    test_nernet(nlp)
 
