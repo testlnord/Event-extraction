@@ -1,52 +1,17 @@
 import logging as log
 import numpy as np
-import os
 import re
 from itertools import cycle
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
-from keras.callbacks import ModelCheckpoint, TensorBoard
+from experiments.textnet import TextNet
 from experiments.data_common import *
 from experiments.ner_tagging.preprocessor import NERPreprocessor
 from experiments.ner_tagging.encoder import LetterNGramEncoder
 from experiments.marking.tags import CategoricalTags
 
 
-class NERNet:
-    def __init__(self, encoder, timesteps, batch_size=8):
-        self.x_len = encoder.vector_length
-        self.batch_size = batch_size
-        self.nbclasses = encoder.tags.nbtags
-        self.timesteps = timesteps
-        self._encoder = encoder
-        self._model = None
-
-        self.padder = Padding(pad_to_length=timesteps)
-        self.batcher = BatchMaker(self.batch_size)
-
-    @classmethod
-    def from_model_file(cls, encoder, model_path=None, batch_size=8):
-        if not model_path:
-            model_dir = os.path.join(os.path.dirname(__file__), 'models')
-            model_name = 'nernet_model_full_default.h5'
-            model_path = os.path.join(model_dir, model_name)
-
-        model = load_model(model_path)
-
-        _, timesteps, x_len = model.layers[0].input_shape
-        if x_len != encoder.vector_length:
-            raise ValueError('NERNet: encoder.vector_length is not consistent with the input of '
-                             'loaded model ({} != {})'.format(encoder.vector_length, x_len))
-        _, timesteps, nbclasses = model.layers[-1].output_shape
-        if nbclasses != encoder.tags.nbtags:
-            raise ValueError('NERNet: encoder.tags.nbtags is not consistent with the output of '
-                             'loaded model ({} != {})'.format(encoder.tags.nbtags, nbclasses))
-
-        net = cls(encoder, timesteps, batch_size)
-        net._model = model
-        log.info('NERNet: loaded model from path {}'.format(model_path))
-        return net
-
+class NERNet(TextNet):
     def compile_model(self):
         # architecture is from the paper
         output_len = 150
@@ -64,48 +29,6 @@ class NERNet:
 
         m.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')
         self._model = m
-
-    def _make_data_gen(self, data_gen, do_infinite=True):
-        # Cycling for keras
-        if do_infinite: data_gen = cycle(data_gen)
-
-        data_gen = self.padder(self._encoder(data_gen))
-        return self.batcher.batch_transposed(data_gen)
-
-    def train(self, data_train_gen, epochs, epoch_size,
-              data_val_gen, nb_val_samples,
-              save_epoch_models=True, dir_for_models='./models',
-              log_for_tensorboard=True, dir_for_logs='./logs'):
-        """Train model, maybe with checkpoints for every epoch and logging for tensorboard"""
-        log.info('NERNet: Training...')
-
-        data_train = self._make_data_gen(data_train_gen)
-        data_val = self._make_data_gen(data_val_gen)
-        callbacks = []
-        # ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2)
-
-        if save_epoch_models:
-            filepath = dir_for_models + '/model_full_epochsize{}'.format(epoch_size) + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
-            mcheck_cb = ModelCheckpoint(filepath, verbose=0, save_weights_only=False, mode='auto')
-            callbacks.append(mcheck_cb)
-        if log_for_tensorboard:
-            tb_cb = TensorBoard(log_dir=dir_for_logs, histogram_freq=1, write_graph=True, write_images=False)
-            callbacks.append(tb_cb)
-
-        return self._model.fit_generator(data_train,
-                                         samples_per_epoch=epoch_size, nb_epoch=epochs,
-                                         max_q_size=2,
-                                         validation_data=data_val, nb_val_samples=nb_val_samples,
-                                         callbacks=callbacks
-                                         )
-
-    def save_model(self, path):
-        self._model.save(path)
-
-    def evaluate(self, data_gen, nb_val_samples):
-        log.info('NERNet: Evaluating...')
-        data_val = self._make_data_gen(data_gen)
-        return self._model.evaluate_generator(data_val, max_q_size=2, val_samples=nb_val_samples)
 
     def __call__(self, doc):
         """Accepts spacy.Doc and modifies it in place (sets IOB tags for tokens)"""
@@ -263,8 +186,8 @@ if __name__ == "__main__":
 
     from experiments.main_pipeline import load_nlp, load_default_ner_net
     from spacy.en import English
-    nlp = English()
     # nlp = load_nlp()
+    nlp = English()
     net = load_default_ner_net(batch_size=batch_size)
 
     # tags = CategoricalTags(('O', 'I', 'B'))

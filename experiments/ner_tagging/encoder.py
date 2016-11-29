@@ -23,7 +23,7 @@ class LetterNGramEncoder(Encoder):
     @classmethod
     def from_vocab_file(cls, tags: Tags, vocab_path=None, force_vector_length=-1, word_vectors_length=300):
         # Determine path of the vocabulary
-        vocab_dir = os.path.join(os.path.dirname(__file__), 'models')
+        vocab_dir = os.path.join(os.path.dirname(__file__), '../models')
         if not vocab_path:
             vocab_name = 'encoder_vocab_default.bin'
             vocab_path = os.path.join(vocab_dir, vocab_name)
