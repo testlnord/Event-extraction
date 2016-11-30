@@ -6,7 +6,7 @@ from keras.callbacks import ModelCheckpoint, TensorBoard
 from experiments.data_common import Padding, BatchMaker
 
 
-class TextNet:
+class SequenceNet:
     def __init__(self, encoder, timesteps, batch_size):
         self.x_len = encoder.vector_length
         self.batch_size = batch_size
