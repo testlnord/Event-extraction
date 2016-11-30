@@ -2,16 +2,15 @@ import logging as log
 import numpy as np
 import re
 from itertools import cycle
+from spacy.tokens import Span
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
-from experiments.textnet import TextNet
+from experiments.sequencenet import SequenceNet
 from experiments.data_common import *
 from experiments.ner_tagging.preprocessor import NERPreprocessor
-from experiments.ner_tagging.encoder import LetterNGramEncoder
-from experiments.marking.tags import CategoricalTags
 
 
-class NERNet(TextNet):
+class NERNet(SequenceNet):
     def compile_model(self):
         # architecture is from the paper
         output_len = 150
@@ -59,12 +58,17 @@ class NERNet(TextNet):
                 log.debug('NERNet: tagged: spacy={}, pred={}, token={}'.format(spacy_iob_class, iob_class, doc[i].text))
 
         # Extract entities
-        entities = re.compile('31*|1+')
+        entities_regex = re.compile('31*|1+')
         doc_classes_str = ''.join(map(str, spacy_doc_classes))
-        spans = [m.span() for m in entities.finditer(doc_classes_str)]
-        entities = tuple(doc[a:b] for a, b in spans)
+        spans = [m.span() for m in entities_regex.finditer(doc_classes_str)]
+        entity_spans = (doc[a:b] for a, b in spans)
+        # Usual words have ent_type = 0, so any entity will have ent_type > 0, therefore max(...)
+        spacy_ent_types = [max(token.ent_type for token in span) for span in entity_spans]
+        # Construct entities (i.e. Spans) preserving spacy entity types
+        entities = tuple(Span(doc=doc, start=start, end=end, label=ent_type)
+                         for (start, end), ent_type in zip(spans, spacy_ent_types))
 
-        # Modify doc in-place
+        # Finally, modify doc in-place
         doc.ents = entities
 
     def predict_batch(self, tokenized_texts):
@@ -195,8 +199,8 @@ if __name__ == "__main__":
     # encoder = LetterNGramEncoder.from_vocab_file(nlp, tags)
     # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
     # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
-    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size)
-
+    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
     # train(net)
+
     eye_test(nlp)
 
