@@ -3,7 +3,7 @@ from spacy.en import English
 from experiments.data_common import *
 from experiments.marking.tags import CategoricalTags
 from experiments.marking.data_fetcher import FilesFetcher, ArticleTextFetch
-from experiments.ner_tagging.preprocessor import NERPreprocessor
+from experiments.ner_tagging.data_fetcher import NERDataFetcher
 from experiments.ner_tagging.encoder import LetterNGramEncoder
 
 
@@ -36,7 +36,7 @@ def make_vocab(nlp, vector_length=-1, ngram=3, raw_tags=('O', 'I', 'B')):
 
     # processing corpora in realtime and saving it for later use
     corpora = get_corpora()
-    encoder = LetterNGramEncoder(nlp, tags, ngram=ngram)
+    encoder = LetterNGramEncoder(tags, ngram=ngram)
     encoder.train(corpora, vector_length)
     log.info('Data: Saving vocabulary...')
     encoder.save_vocab()
@@ -70,7 +70,7 @@ def test():
     nlp = English()
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, force_vector_length=x_len)
-    data_thing = NERPreprocessor()
+    data_thing = NERDataFetcher()
 
     # test 1
     test_tokens = ['a', 'ab', 'abe', 'xxxxx', 'cat', 'aaaaaaa', 'banana', 'webinar']
@@ -85,7 +85,7 @@ def test():
     for i, (sent, tags) in enumerate(islice(data_fetch, start, end)):
         print('test: encoding #{}'.format(i), sent)
         tags_enc = np.array(encoder.encode_tags(tags))
-        sent_enc = np.array(encoder.encode_text(sent))
+        sent_enc = np.array(encoder.encode_data(sent))
 
         # for token, token_enc in zip(sent, sent_enc):
         #     test_single_token(encoder, token, token_enc)
@@ -101,7 +101,7 @@ def test_shapes():
     nlp = English()
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(nlp, tags, force_vector_length=x_len)
-    data_thing = NERPreprocessor()
+    data_thing = NERDataFetcher()
 
     data_fetch = encoder(data_thing._wikigold_conll())
     # path='data_encoded_wikigold_{}gram_{}len.bin'.format(ngram, x_len)

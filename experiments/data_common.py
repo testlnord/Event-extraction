@@ -1,5 +1,5 @@
 import logging as log
-from itertools import islice
+import pickle
 import numpy as np
 
 
@@ -27,11 +27,21 @@ def split_range(length, splits, batch_size=1):
 
 
 def split(slicible, splits, batch_size=1):
-    """Split something on len(splits) parts with sizes proportional values in splits.
+    """Split something on len(splits) parts with sizes proportional to values in splits.
     Sizes of the parts will be multiples of batch_size."""
-    edges = split(len(slicible), batch_size, splits)
-    subsets = [islice(slicible, a, b) for a, b in edges]
+    length = len(slicible)
+    edges = split_range(length, splits, batch_size)
+    subsets = [slicible[a:b] for a, b in edges]
     return subsets
+
+
+def unpickle(filename):
+    with open(filename, 'rb') as f:
+        while True:
+            try:
+                yield pickle.load(f)
+            except EOFError:
+                break
 
 
 def visualise(model, filename='model.png', exit_after=False):
