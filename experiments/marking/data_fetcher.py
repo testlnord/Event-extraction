@@ -18,7 +18,7 @@ class ArticleTextFetch:
         self.downloaders = downloaders
         self.db = DatabaseHandler()
 
-    # todo:
+    # todo: get new articles
     def get(self, only_new=True):
         """Download articles, add them to database and yield if they are not already in db """
         # article_generators = map(lambda d: d.get_articles(), self.downloaders)
@@ -31,13 +31,13 @@ class ArticleTextFetch:
                     continue
 
                 for text in self._texts_from_article(article):
-                    yield text
+                    yield article, text
 
     def get_old(self):
         """Yield articles from database"""
         for article in self.db.get_articles():
             for text in self._texts_from_article(article):
-                yield text
+                yield article, text
 
     def _texts_from_article(self, article):
         t = []
@@ -94,10 +94,10 @@ class FileLineFetcher:
             for line in f.readlines():
                 yield line
 
-    def get_with_tags(self):
+    def get_with_tags(self, separator=';'):
         with open(self.path) as f:
             for line in f.readlines():
-                sent_and_tag = line.split(';')
+                sent_and_tag = line.split(sep=separator)
                 raw_sent = sent_and_tag[0]
                 raw_tag = sent_and_tag[1]
                 yield self.nlp(raw_sent)[:], str.strip(raw_tag)
