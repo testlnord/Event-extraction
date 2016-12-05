@@ -3,7 +3,7 @@ import os
 from itertools import cycle
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from experiments.data_common import Padding, BatchMaker
+from experiments.data_common import Padding, BatchMaker, split
 
 
 class SequenceNet:
@@ -14,15 +14,21 @@ class SequenceNet:
         self.timesteps = timesteps
         self._encoder = encoder
         self._model = None
-        # self.default_model_name = 'model_full_default.h5'
 
         self.padder = Padding(pad_to_length=timesteps)
         self.batcher = BatchMaker(self.batch_size)
 
+    @staticmethod
+    def relpath(*path):
+        """Return absolute path from path relative to directory where this file is contained.
+        It is assumed that there other necessary files in that directory
+        (e.g. dir with models, dir with data, dir with logs)"""
+        return os.path.join(os.path.dirname(__file__), *path)
+
     @classmethod
-    def from_model_file(cls, encoder, model_path=None, batch_size=8):
+    def from_model_file(cls, encoder, batch_size, model_path=None):
         if not model_path:
-            model_dir = os.path.join(os.path.dirname(__file__), 'models')
+            model_dir = cls.relpath('models')
             model_name = '{}_model_full_default.h5'.format(cls.__name__.lower())
             model_path = os.path.join(model_dir, model_name)
 
@@ -44,8 +50,8 @@ class SequenceNet:
 
     def train(self, data_train_gen, epochs, epoch_size,
               data_val_gen, nb_val_samples,
-              save_epoch_models=True, dir_for_models='./models',
-              log_for_tensorboard=True, dir_for_logs='./logs',
+              save_epoch_models=True, dir_for_models='models',
+              log_for_tensorboard=True, dir_for_logs='logs',
               max_q_size=2):
         """Train model, maybe with checkpoints for every epoch and logging for tensorboard"""
         log.info('{}: Training...'.format(type(self).__name__))
@@ -56,8 +62,11 @@ class SequenceNet:
         # ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2)
 
         if save_epoch_models:
-            filepath = dir_for_models + '/{}_model_full_epochsize{}'.format(type(self).__name__.lower(), epoch_size) + \
-                       '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
+            filepath = self.relpath(
+                dir_for_models,
+                '{}_model_full_epochsize{}'.format(type(self).__name__.lower(), epoch_size)
+                + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
+            )
             mcheck_cb = ModelCheckpoint(filepath, verbose=0, save_weights_only=False, mode='auto')
             callbacks.append(mcheck_cb)
         if log_for_tensorboard:
@@ -76,14 +85,46 @@ class SequenceNet:
         data_val = self._make_data_gen(data_gen)
         return self._model.evaluate_generator(data_val, max_q_size=max_q_size, val_samples=nb_val_samples)
 
-    def _make_data_gen(self, data_gen, do_infinite=True):
+    def _make_data_gen(self, data, do_infinite=True):
         # Cycling for keras
-        if do_infinite: data_gen = cycle(data_gen)
+        if do_infinite:
+            data = cycle(data)
+        data = self.padder(self._encoder(data))
+        return self.batcher.batch_transposed(data)
 
-        data_gen = self.padder(self._encoder(data_gen))
-        return self.batcher.batch_transposed(data_gen)
-
-    # todo: make default path name
-    def save_model(self, path):
+    def save_model(self, path=None):
+        if not path:
+            path = self.relpath('models', '{}_model_full.h5'.format(type(self).__name__.lower()))
         self._model.save(path)
+
+
+def train(net, data, epoch_size, nbepochs, nb_val_samples, splits=(0.1, 0.2, 0.7)):
+    """
+    Train neural network and save history of training
+    :param net: neural network
+    :param data: data
+    :param epoch_size: size of the epoch
+    :param nbepochs: number of epochs
+    :param nb_val_samples: number of samples to use for validation each epoch
+    :param splits: tuple of (val_samples, test_samples, train_samples) as part of data param
+    """
+    data_splits = split(data, splits)
+    data_val = data_splits[0]
+    data_test = data_splits[1]
+    data_train = data_splits[2]
+
+    # Training
+    hist = net.train(data_train, nbepochs, epoch_size, data_val, nb_val_samples)
+    print('Hisory:', hist.history)
+
+    # Saving history
+    hist_path = net.relpath(
+        'logs/history_{}_epochsize{}_epochs{}.json'.format(type(net).__name__.lower(), epoch_size, nbepochs))
+    with open(hist_path, 'w') as f:
+        import json
+        json.dump(hist.history, f)
+
+    # Evaluating
+    print('Evaluation: {}'.format(net.evaluate(data_test)))
+
 

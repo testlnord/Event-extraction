@@ -1,13 +1,11 @@
 import logging as log
-import numpy as np
 import re
-from itertools import cycle
 from spacy.tokens import Span
 from keras.models import Sequential, load_model
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
-from experiments.sequencenet import SequenceNet
+from experiments.sequencenet import SequenceNet, train
 from experiments.data_common import *
-from experiments.ner_tagging.preprocessor import NERPreprocessor
+from experiments.ner_tagging.data_fetcher import NERDataFetcher
 
 
 class NERNet(SequenceNet):
@@ -74,12 +72,11 @@ class NERNet(SequenceNet):
     def predict_batch(self, tokenized_texts):
         orig_lengths = [len(ttext) for ttext in tokenized_texts]
         texts_enc = [self.padder.pad(self._encoder.encode_data(ttext))[0] for ttext in tokenized_texts]
-        # texts_enc = list(self.padder(tuple(self._encoder(tokenized_texts))))
         x = np.array(texts_enc)
         batch_size = len(x)
 
         classes_batch = self._model.predict_classes(x, batch_size=batch_size)
-        # cut to original lengths
+        # Cut to original lengths
         classes_batch = [classes[:orig_length] for orig_length, classes in zip(orig_lengths, classes_batch)]
         return classes_batch
 
@@ -158,30 +155,6 @@ def eye_test(nlp):
         print('pred:', pred)
 
 
-def train(net):
-    data_thing = NERPreprocessor()
-    splits = (0.1, 0.2, 0.7)
-    data_splits = split(data_thing, splits)
-    data_val = data_splits[0]
-    data_test = data_splits[1]
-    data_train = data_splits[2]
-
-    # Training
-    epoch_size = 8192
-    nbepochs = 13
-    hist = net.train(data_train, nbepochs, epoch_size, data_val, 1024)
-    print('Hisory:', hist.history)
-
-    # Saving history
-    hist_path = './logs/history_epochsize{}_epochs{}.json'.format(epoch_size, nbepochs)
-    with open(hist_path, 'w') as f:
-        import json
-        json.dump(hist.history, f)
-
-    # Evaluating
-    print('Evaluation: {}'.format(net.evaluate(data_test)))
-
-
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
@@ -200,7 +173,9 @@ if __name__ == "__main__":
     # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
     # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
     # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
-    # train(net)
+
+    # data = list(NERDataFetcher().objects())
+    # train(net, data, epoch_size=8192, nbepochs=13, nb_val_samples=1024)
 
     eye_test(nlp)
 
