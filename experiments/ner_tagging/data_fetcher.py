@@ -1,22 +1,20 @@
 from itertools import chain
-from experiments.marking.preprocessor import Preprocessor
 
 
-# todo: it is data fetcher and preprocessor. maybe divide somehow
-class NERPreprocessor:
+class NERDataFetcher:
     def objects(self):
         for sent, tags in chain(self._wikigold_conll(), self._wikiner_wp3()):
             yield sent, tags
 
     def __len__(self):
+        # Counted empirically
         return 143840
 
-    def _wikigold_conll(self, path='/media/Documents/datasets/ner/wikigold.conll.txt'):
+    def _wikigold_conll(self, path='../data/wikigold.conll.txt'):
         with open(path) as f:
             sent = []
             tags = []
             for line in f:
-                # print(line.strip())
                 line = line.strip()
                 if len(line) > 0:
                     token, ner_tag = line.split(' ', maxsplit=2)
@@ -30,7 +28,7 @@ class NERPreprocessor:
                     sent.clear()
                     tags.clear()
 
-    def _wikiner_wp3(self, path='/media/Documents/datasets/ner/aij-wikiner-en-wp3'):
+    def _wikiner_wp3(self, path='../data/aij-wikiner-en-wp3.txt'):
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -56,10 +54,9 @@ class NERPreprocessor:
 
 
 if __name__ == "__main__":
-    preprocessor = NERPreprocessor()
+    preprocessor = NERDataFetcher()
     data = preprocessor.objects()
+
     for i, (sent, tags) in enumerate(data):
-        # print(i)
         print(i, ' '.join(sent))
         print(i, ' '.join(tags))
-        pass
