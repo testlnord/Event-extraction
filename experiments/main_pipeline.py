@@ -4,7 +4,7 @@ import pickle
 import spacy
 from spacy.en import English
 from db.db_handler import DatabaseHandler
-from event import Event
+from experiments.event_extractor import EventExtractor
 from experiments.ner_tagging.net import NERNet
 from experiments.ner_tagging.encoder import LetterNGramEncoder
 from experiments.marking.net import ClassifierNet
@@ -62,39 +62,28 @@ def load_default_classifier_net(model_path=None, batch_size=16):
     return cl_net
 
 
-def extract_event(sentence, category):
-    entity1 = None
-    entity2 = None
-    action = None
-    date = None
-    location = None
-
-    # todo: entity1, entity2 and action extraction heuristics
-    for token in sentence:
-        pass
-
-    event = Event(entity1=entity1, entity2=entity2, action=action, sentence=sentence,
-                  date=date, location=location)
-    return event
-
-
 def deploy_pipeline(nlp):
     db_handler = DatabaseHandler()
 
     data_fetcher = ArticleTextFetch()
     preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
     classifier = load_default_classifier_net()
+    eextractor = EventExtractor()
 
     # todo: decent article fetcher
     for article, text in data_fetcher.get_old():
         for sent in preprocessor.sents(text):
             category = classifier.predict(sent)
             if category:
-                event = extract_event(sentence=sent, category=category)
+                event = eextractor.extract_event(sentence=sent, category=category)
                 # Final step: send event to the database
                 info = db_handler.add_event_or_get_id(event, article)
                 log.info('Main_deploy: db_handler: url={}; {}'.format(article.url, info))
 
+
+# todo: processing previously untagged data
+def process_untagged(nlp):
+    pass
 
 # todo: generate dataset
 # todo: train classifier net
@@ -106,7 +95,6 @@ def train_pipeline(nlp):
     tags = CategoricalTags(raw_tags)
     # todo: precise heuristic tagger
     tagger1 = HeuristicSpanTagger(tags, nlp)
-    # todo: check text user tagger
     tagger2 = TextUserTagger(tags, None)
     tagger = ChainTagger(tags)
     tagger.add_tagger(tagger1)
@@ -117,21 +105,32 @@ def train_pipeline(nlp):
     tagged_data = open(tagged_data_filename, 'wb')
     untagged_data = open(untagged_data_filename, 'wb')
 
-    for article, text in data_fetcher.get_old():
-        for sent in preprocessor.sents(text): # there is a ner_net in preprocessor
-            tag = tagger.tag(sent)
-            if tag is not None:
-                # Saving tagged text for later use (training)
-                pickle.dump((sent.text, tag), tagged_data)
-            else:
-                pickle.dump(sent.text, tagged_data)
+    i = 0 # Monitoring number of processed data units
+    try:
 
-    tagged_data.close()
-    untagged_data.close()
+        for article, text in data_fetcher.get_old():
+            for sent in preprocessor.sents(text): # there is a ner_net in preprocessor
+                tag = tagger.tag(sent)
+                i += 1
+                if tag is not None:
+                    # Saving tagged text for later use (training)
+                    pickle.dump((sent.text, tag), tagged_data)
+                else:
+                    pickle.dump(sent.text, tagged_data)
+
+    # This allows to continue tagging next time exactly from the place we stopped
+    except KeyboardInterrupt:
+        print('train_pipeline: interrupt: stopping at data unit №{} (counting from zero)'.format(i))
+    except Exception as e:
+        print('train_pipeline: exception occured at data unit №{} (counting from zero)'.format(i))
+        raise
+    else:
+        tagged_data.close()
+        untagged_data.close()
 
 
-def test_nernet(nlp):
-    with open('samples.txt') as f:
+def test_nernet(nlp, data_file='data/samples.txt'):
+    with open(data_file) as f:
         log.info('Test NERNet: making doc...')
         doc = nlp(f.read())
         log.info('Test NERNet: made doc')
