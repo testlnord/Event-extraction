@@ -18,7 +18,7 @@ class Tags:
 
 
 class CategoricalTags(Tags):
-    """Provided tags must allow convertation to string without loss of information"""
+    """Provided tags must allow conversion to string without loss of information"""
     def __init__(self, raw_tags):
         self.raw_tags = tuple(map(str, raw_tags))
         self.nbtags = len(raw_tags)
@@ -42,14 +42,14 @@ class CategoricalTags(Tags):
         cat[self.raw_tags.index(str(raw_tag))] = 1
         return cat
 
-    def _to_raw(self, cat) -> str:
+    def _to_raw(self, cat):
         i = None
         if isinstance(cat, list):
             i = cat.index(1)
         elif isinstance(cat, int):
             i = cat
         else:
-            raise TypeError('Category has inappropriate type. Extepcted list or int. Got {}'.format(type(cat)))
+            raise TypeError('Category has inappropriate type. Expected list or int. Got {}'.format(type(cat)))
 
         return self.raw_tags[i]
 
