@@ -88,7 +88,7 @@ class BatchMaker:
         return list(map(np.array, zip(*batch)))
 
 
-class Padding:
+class Padder:
     def __init__(self, pad_to_length, pad_value=0, pad_first_n=-1, cut_too_long=True):
         self.pad_to_length = pad_to_length
         self.pad_value = pad_value

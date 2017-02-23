@@ -43,7 +43,7 @@ def test_shapes():
     # path='data_encoded_wikigold_{}gram_{}len.bin'.format(ngram, x_len)
     # data_fetch = deserialize_data_with_logging(path)
 
-    pad = Padding(timesteps)
+    pad = Padder(timesteps)
     batch = BatchMaker(batch_size)
     batched = batch.batch_transposed(pad(data_fetch))
 

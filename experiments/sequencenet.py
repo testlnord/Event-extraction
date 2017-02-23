@@ -2,7 +2,7 @@ import logging as log
 import os
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from experiments.data_common import Padding, BatchMaker
+from experiments.data_common import Padder, BatchMaker
 
 
 class SequenceNet:
@@ -14,7 +14,7 @@ class SequenceNet:
         self._encoder = encoder
         self._model = None
 
-        self.padder = Padding(pad_to_length=timesteps)
+        self.padder = Padder(pad_to_length=timesteps)
         self.batcher = BatchMaker(self.batch_size)
 
     @staticmethod
@@ -86,9 +86,9 @@ class SequenceNet:
         data_val = self._make_data_gen(data_gen)
         return self._model.evaluate_generator(data_val, max_q_size=max_q_size, val_samples=nb_val_samples)
 
-    def _make_data_gen(self, data):
-        data = self.padder(self._encoder(data))
-        return self.batcher.batch_transposed(data)
+    def _make_data_gen(self, data_gen):
+        data_gen = self.padder(self._encoder.encode(data) for data in data_gen)
+        return self.batcher.batch_transposed(data_gen)
 
     def save_model(self, path=None):
         if not path:
