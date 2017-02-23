@@ -1,12 +1,13 @@
 import logging as log
 import numpy as np
 import os
+from itertools import cycle
 from keras.models import Sequential
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
-from experiments.sequencenet import SequenceNet, train
+from experiments.sequencenet import SequenceNet
 from experiments.marking.tags import CategoricalTags
 from experiments.marking.encoder import SentenceEncoder
-from experiments.data_common import unpickle
+from experiments.data_common import unpickle, split
 
 
 class ClassifierNet(SequenceNet):
@@ -50,7 +51,13 @@ if __name__ == "__main__":
     if os.path.isfile(data_file_path):
         data_thing = unpickle(data_file_path)
         data = list(data_thing)
+        splits = (0.1, 0.2, 0.7)
+        data_splits = split(data, splits)
+        data_val = cycle(data_splits[0])
+        data_test = cycle(data_splits[1])
+        data_train = cycle(data_splits[2])
 
-        train(net, data, epoch_size=1024, nbepochs=10, nb_val_samples=128)
+        net.train(data_train_gen=data_train, epoch_size=1024, epochs=10,
+                  data_val_gen=data_val, nb_val_samples=128)
     else:
         log.warning('ClassifierNet training: file {} with data was not found! Please, create dataset first.')

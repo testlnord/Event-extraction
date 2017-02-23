@@ -1,7 +1,6 @@
 import logging as log
 from os import path
 import pickle
-import spacy
 from spacy.en import English
 from db.db_handler import DatabaseHandler
 from experiments.event_extractor import EventExtractor
@@ -13,29 +12,6 @@ from experiments.marking.preprocessor import NLPPreprocessor
 from experiments.marking.tags import CategoricalTags
 from experiments.marking.tagger import HeuristicSpanTagger, TextUserTagger, ChainTagger
 from experiments.marking.encoder import SentenceEncoder
-
-
-def load_nlp2(lang_id='en', path_to_model=None, path_to_vecs=None, batch_size=16):
-    args = {}
-    if path_to_vecs and path.isfile(path_to_vecs):
-        def add_vectors(vocab):
-            vocab.load_vectors_from_bin_loc(path_to_vecs)
-
-        args['add_vectors'] = add_vectors
-        log.info('load_nlp: loading custom word vectors from {}'.format(path_to_vecs))
-    else:
-        log.info('load_nlp: file for word vectors not found; path: {}'.format(path_to_vecs))
-        log.info('load_nlp: loading default word vectors')
-
-    if path_to_model and path.isfile(path_to_model):
-        def create_pipeline(nlp):
-            ner_net = load_default_ner_net(batch_size=batch_size)
-            return [nlp.tagger, nlp.parser, nlp.entity, ner_net]
-        args['create_pipeline'] = create_pipeline
-        log.info('load_nlp: adding custom entity (iob) tagger to pipeline')
-
-    nlp = spacy.load(lang_id, **args)
-    return nlp
 
 
 def load_nlp(model_path=None, batch_size=16):

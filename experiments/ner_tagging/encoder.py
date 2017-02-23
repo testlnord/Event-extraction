@@ -3,7 +3,7 @@ import os
 import pickle
 from collections import Counter
 from spacy.tokens import Span
-from experiments.marking.tags import Tags, CategoricalTags
+from experiments.marking.tags import Tags
 from experiments.marking.abstract_encoder import Encoder
 
 
@@ -36,6 +36,10 @@ class LetterNGramEncoder(Encoder):
             return encoder
 
         raise ('LetterNGramEncoder: vocab with path {} is not found. Cannot construct encoder'.format(vocab_path))
+
+    @property
+    def nbclasses(self):
+        return len(self.tags)
 
     def encode_tags(self, raw_tags):
         return [self.tags.encode(raw_tag) for raw_tag in raw_tags]
@@ -140,3 +144,43 @@ class LetterNGramEncoder(Encoder):
             pad_value = self.dummy_char * self.ngram
             self.vocab.extend([pad_value] * nb_pad_values)
             self._vector_length = vector_length
+
+
+def get_corpora(root_dir_of_corpora_files='/media/datasets/OANC-GrAF/data/written_2'):
+    from experiments.marking.data_fetcher import FilesFetcher, ArticleTextFetch
+
+    total_texts = 0
+    total_symbols = 0
+
+    min_len = 5
+    articles_fetcher = ArticleTextFetch(return_header=True, return_summary=True, return_article_text=True)
+    for text in articles_fetcher.get_old():
+        if len(text) >= min_len:
+            total_symbols += len(text)
+            total_texts += 1
+            yield text
+
+    texts = FilesFetcher.get_texts_from_filetree(root_dir_of_corpora_files)
+    for text in texts:
+        if len(text) >= min_len:
+            total_symbols += len(text)
+            total_texts += 1
+            yield text
+
+    log.info('get_corpora: total: texts='
+             '{}, symbols={}, approx. words={}'.format(total_texts, total_symbols, total_symbols/5.1))
+
+
+def make_vocab(vector_length=-1, ngram=3, raw_tags=('O', 'I', 'B')):
+    """Make vocabulary for LetterNGramEncoder"""
+    from experiments.marking.tags import CategoricalTags
+
+    tags = CategoricalTags(raw_tags)
+    encoder = LetterNGramEncoder(tags, ngram=ngram)
+
+    corpora = get_corpora()
+    encoder.train(corpora, vector_length)
+    log.info('Data: Saving vocabulary...')
+    encoder.save_vocab()
+    log.info('Data: Saved vocabulary. Vector length is {}'.format(encoder.vector_length))
+

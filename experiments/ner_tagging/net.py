@@ -1,10 +1,12 @@
 import logging as log
 import re
+import numpy as np
+from itertools import cycle
 from spacy.tokens import Span
-from keras.models import Sequential, load_model
+from keras.models import Sequential
 from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
-from experiments.sequencenet import SequenceNet, train
-from experiments.data_common import *
+from experiments.sequencenet import SequenceNet
+from experiments.data_common import split
 from experiments.ner_tagging.data_fetcher import NERDataFetcher
 
 
@@ -80,7 +82,7 @@ class NERNet(SequenceNet):
         classes_batch = [classes[:orig_length] for orig_length, classes in zip(orig_lengths, classes_batch)]
         return classes_batch
 
-
+# todo:
 def eye_test(nlp):
     texts = [
         '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .',
@@ -158,24 +160,30 @@ def eye_test(nlp):
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
-    vector_length = 30000
-    batch_size = 16
-
-    from experiments.main_pipeline import load_nlp, load_default_ner_net
     from spacy.en import English
-    # nlp = load_nlp()
+    from experiments.ner_tagging.encoder import LetterNGramEncoder
+    from experiments.marking.tags import CategoricalTags
     nlp = English()
-    net = load_default_ner_net(batch_size=batch_size)
 
-    # tags = CategoricalTags(('O', 'I', 'B'))
-    # vocab_path = 'models/encoder_vocab_{}gram_{}len.bin'.format(3, vector_length)
-    # encoder = LetterNGramEncoder.from_vocab_file(nlp, tags)
+    tags = CategoricalTags(('O', 'I', 'B'))
+    encoder = LetterNGramEncoder.from_vocab_file(tags)
     # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
     # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
-    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
+    model_path=None
+    net = NERNet.from_model_file(encoder=encoder, batch_size=16, model_path=model_path)
 
-    # data = list(NERDataFetcher().objects())
-    # train(net, data, epoch_size=8192, nbepochs=13, nb_val_samples=1024)
+    data = list(NERDataFetcher().objects())
+    splits = (0.1, 0.2, 0.7)
+    data_splits = split(data, splits)
+    data_val = cycle(data_splits[0])
+    data_test = cycle(data_splits[1])
+    data_train = cycle(data_splits[2])
 
-    eye_test(nlp)
+    net.train(data_train_gen=data_train, epoch_size=8192, epochs=13,
+              data_val_gen=data_val, nb_val_samples=1024)
+
+    net.evaluate(data_test, nb_val_samples=32768)
+    print('Evaluation: {}'.format(net.evaluate(data_test)))
+
+    # eye_test(nlp)
 

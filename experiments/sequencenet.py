@@ -1,17 +1,16 @@
 import logging as log
 import os
-from itertools import cycle
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from experiments.data_common import Padding, BatchMaker, split
+from experiments.data_common import Padding, BatchMaker
 
 
 class SequenceNet:
     def __init__(self, encoder, timesteps, batch_size):
         self.x_len = encoder.vector_length
-        self.batch_size = batch_size
-        self.nbclasses = encoder.tags.nbtags
+        self.nbclasses = encoder.nbclasses
         self.timesteps = timesteps
+        self.batch_size = batch_size
         self._encoder = encoder
         self._model = None
 
@@ -20,9 +19,6 @@ class SequenceNet:
 
     @staticmethod
     def relpath(*path):
-        """Return absolute path from path relative to directory where this file is contained.
-        It is assumed that there other necessary files in that directory
-        (e.g. dir with models, dir with data, dir with logs)"""
         return os.path.join(os.path.dirname(__file__), *path)
 
     @classmethod
@@ -51,7 +47,7 @@ class SequenceNet:
     def train(self, data_train_gen, epochs, epoch_size,
               data_val_gen, nb_val_samples,
               save_epoch_models=True, dir_for_models='models',
-              log_for_tensorboard=True, dir_for_logs='logs',
+              log_for_tensorboard=True, save_history=True, dir_for_logs='logs',
               max_q_size=2):
         """Train model, maybe with checkpoints for every epoch and logging for tensorboard"""
         log.info('{}: Training...'.format(type(self).__name__))
@@ -59,7 +55,6 @@ class SequenceNet:
         data_train = self._make_data_gen(data_train_gen)
         data_val = self._make_data_gen(data_val_gen)
         callbacks = []
-        # ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2)
 
         if save_epoch_models:
             filepath = self.relpath(
@@ -73,22 +68,25 @@ class SequenceNet:
             tb_cb = TensorBoard(log_dir=dir_for_logs, histogram_freq=1, write_graph=True, write_images=False)
             callbacks.append(tb_cb)
 
-        return self._model.fit_generator(data_train,
+        hist = self._model.fit_generator(data_train,
                                          samples_per_epoch=epoch_size, nb_epoch=epochs,
                                          max_q_size=max_q_size,
                                          validation_data=data_val, nb_val_samples=nb_val_samples,
                                          callbacks=callbacks
                                          )
+        if save_history:
+            hist_path = self.relpath(
+                'logs', 'history_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), epoch_size, epochs))
+            with open(hist_path, 'w') as f:
+                import json
+                json.dump(hist.history, f)
 
     def evaluate(self, data_gen, nb_val_samples, max_q_size=2):
         log.info('{}: Evaluating...'.format(type(self).__name__))
         data_val = self._make_data_gen(data_gen)
         return self._model.evaluate_generator(data_val, max_q_size=max_q_size, val_samples=nb_val_samples)
 
-    def _make_data_gen(self, data, do_infinite=True):
-        # Cycling for keras
-        if do_infinite:
-            data = cycle(data)
+    def _make_data_gen(self, data):
         data = self.padder(self._encoder(data))
         return self.batcher.batch_transposed(data)
 
@@ -96,35 +94,4 @@ class SequenceNet:
         if not path:
             path = self.relpath('models', '{}_model_full.h5'.format(type(self).__name__.lower()))
         self._model.save(path)
-
-
-def train(net, data, epoch_size, nbepochs, nb_val_samples, splits=(0.1, 0.2, 0.7)):
-    """
-    Train neural network and save history of training
-    :param net: neural network
-    :param data: data
-    :param epoch_size: size of the epoch
-    :param nbepochs: number of epochs
-    :param nb_val_samples: number of samples to use for validation each epoch
-    :param splits: tuple of (val_samples, test_samples, train_samples) as part of data param
-    """
-    data_splits = split(data, splits)
-    data_val = data_splits[0]
-    data_test = data_splits[1]
-    data_train = data_splits[2]
-
-    # Training
-    hist = net.train(data_train, nbepochs, epoch_size, data_val, nb_val_samples)
-    print('Hisory:', hist.history)
-
-    # Saving history
-    hist_path = net.relpath(
-        'logs/history_{}_epochsize{}_epochs{}.json'.format(type(net).__name__.lower(), epoch_size, nbepochs))
-    with open(hist_path, 'w') as f:
-        import json
-        json.dump(hist.history, f)
-
-    # Evaluating
-    print('Evaluation: {}'.format(net.evaluate(data_test)))
-
 
