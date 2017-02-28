@@ -1,13 +1,15 @@
 import logging as log
 import re
-import numpy as np
 from itertools import cycle
-from spacy.tokens import Span
+
+import numpy as np
+from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Masking
 from keras.models import Sequential
-from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
+from spacy.tokens import Span
+
+from experiments.data_utils import split
+from experiments.ner_tagging.ner_fetcher import NERDataFetcher
 from experiments.sequencenet import SequenceNet
-from experiments.data_common import split
-from experiments.ner_tagging.data_fetcher import NERDataFetcher
 
 
 class NERNet(SequenceNet):
@@ -161,8 +163,8 @@ if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
     from spacy.en import English
-    from experiments.ner_tagging.encoder import LetterNGramEncoder
-    from experiments.marking.tags import CategoricalTags
+    from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
+    from experiments.tags import CategoricalTags
     nlp = English()
 
     tags = CategoricalTags(('O', 'I', 'B'))

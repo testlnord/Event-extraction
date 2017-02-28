@@ -1,7 +1,9 @@
 import logging as log
+
 from spacy.tokens import Span
+
 from experiments.event_with_offsets import EventOffsets
-from experiments.marking.tags import Tags
+from experiments.tags import Tags
 
 
 class ChainTagger:

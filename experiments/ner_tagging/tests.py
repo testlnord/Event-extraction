@@ -1,9 +1,9 @@
-import logging as log
 from spacy.en import English
-from experiments.data_common import *
-from experiments.marking.tags import CategoricalTags
-from experiments.ner_tagging.data_fetcher import NERDataFetcher
-from experiments.ner_tagging.encoder import LetterNGramEncoder
+
+from experiments.data_utils import *
+from experiments.ner_tagging.ner_fetcher import NERDataFetcher
+from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
+from experiments.tags import CategoricalTags
 
 
 def test_single_token(encoder, token, enc=None):

@@ -1,17 +1,18 @@
 import logging as log
-from os import path
 import pickle
+
 from spacy.en import English
+
 from db.db_handler import DatabaseHandler
 from experiments.event_extractor import EventExtractor
-from experiments.ner_tagging.net import NERNet
-from experiments.ner_tagging.encoder import LetterNGramEncoder
+from experiments.marking.article_fetcher import ArticleTextFetcher
 from experiments.marking.net import ClassifierNet
-from experiments.marking.data_fetcher import ArticleTextFetch
-from experiments.marking.preprocessor import NLPPreprocessor
-from experiments.marking.tags import CategoricalTags
-from experiments.marking.tagger import HeuristicSpanTagger, TextUserTagger, ChainTagger
-from experiments.marking.encoder import SentenceEncoder
+from experiments.marking.nlp_preprocessor import NLPPreprocessor
+from experiments.marking.sentence_encoder import SentenceEncoder
+from experiments.marking.taggers import HeuristicSpanTagger, TextUserTagger, ChainTagger
+from experiments.ner_tagging.ner_net import NERNet
+from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
+from experiments.tags import CategoricalTags
 
 
 def load_nlp(model_path=None, batch_size=16):
@@ -41,7 +42,7 @@ def load_default_classifier_net(model_path=None, batch_size=16):
 def deploy_pipeline(nlp):
     db_handler = DatabaseHandler()
 
-    data_fetcher = ArticleTextFetch()
+    data_fetcher = ArticleTextFetcher()
     preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
     classifier = load_default_classifier_net()
     eextractor = EventExtractor()
@@ -64,7 +65,7 @@ def process_untagged(nlp):
 # todo: generate dataset
 # todo: train classifier net
 def train_pipeline(nlp):
-    data_fetcher = ArticleTextFetch() # let it be articles
+    data_fetcher = ArticleTextFetcher() # let it be articles
     preprocessor = NLPPreprocessor(nlp, min_words_in_sentence=3)
 
     raw_tags = (0, 1)

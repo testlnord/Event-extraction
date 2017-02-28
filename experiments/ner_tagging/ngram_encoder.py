@@ -2,9 +2,11 @@ import logging as log
 import os
 import pickle
 from collections import Counter
+
 from spacy.tokens import Span
-from experiments.marking.tags import Tags
-from experiments.marking.abstract_encoder import Encoder
+
+from experiments.abstract_encoder import Encoder
+from experiments.tags import Tags
 
 
 class LetterNGramEncoder(Encoder):
@@ -147,13 +149,19 @@ class LetterNGramEncoder(Encoder):
 
 
 def get_corpora(root_dir_of_corpora_files='/media/datasets/OANC-GrAF/data/written_2'):
-    from experiments.marking.data_fetcher import FilesFetcher, ArticleTextFetch
+    """
+    Extract text corpora as generator using text files and articles from database.
+    :param root_dir_of_corpora_files: directory with text files
+    :return: text generator
+    """
+    from experiments.marking.files_fetcher import FilesFetcher
+    from experiments.marking.article_fetcher import ArticleTextFetcher
 
     total_texts = 0
     total_symbols = 0
 
     min_len = 5
-    articles_fetcher = ArticleTextFetch(return_header=True, return_summary=True, return_article_text=True)
+    articles_fetcher = ArticleTextFetcher(return_header=True, return_summary=True, return_article_text=True)
     for text in articles_fetcher.get_old():
         if len(text) >= min_len:
             total_symbols += len(text)
@@ -172,12 +180,17 @@ def get_corpora(root_dir_of_corpora_files='/media/datasets/OANC-GrAF/data/writte
 
 
 def make_vocab(vector_length=-1, ngram=3, raw_tags=('O', 'I', 'B')):
-    """Make vocabulary for LetterNGramEncoder"""
-    from experiments.marking.tags import CategoricalTags
+    """
+    Train LetterNGramEncoder on corpora (extract and count ngrams from corpora) and save vocabulary.
+    Just helper function.
+    :param vector_length: length of the vocabulary (number of most frequent ngrams to keep), by default keep all (-1)
+    :param ngram: length of ngram
+    :param raw_tags: tags for later use in LetterNGramEncoder
+    """
+    from experiments.tags import CategoricalTags
 
     tags = CategoricalTags(raw_tags)
     encoder = LetterNGramEncoder(tags, ngram=ngram)
-
     corpora = get_corpora()
     encoder.train(corpora, vector_length)
     log.info('Data: Saving vocabulary...')

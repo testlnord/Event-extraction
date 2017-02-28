@@ -1,13 +1,15 @@
 import logging as log
-import numpy as np
 import os
 from itertools import cycle
+
+import numpy as np
+from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Masking
 from keras.models import Sequential
-from keras.layers import TimeDistributed, Bidirectional, LSTM, Dense, Activation, Masking
+
+from experiments.data_utils import unpickle, split
+from experiments.marking.sentence_encoder import SentenceEncoder
 from experiments.sequencenet import SequenceNet
-from experiments.marking.tags import CategoricalTags
-from experiments.marking.encoder import SentenceEncoder
-from experiments.data_common import unpickle, split
+from experiments.tags import CategoricalTags
 
 
 class ClassifierNet(SequenceNet):

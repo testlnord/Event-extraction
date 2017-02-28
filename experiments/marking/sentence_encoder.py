@@ -1,7 +1,7 @@
-import logging as log
 from spacy.tokens import Span
-from experiments.marking.tags import Tags
-from experiments.marking.abstract_encoder import Encoder
+
+from experiments.abstract_encoder import Encoder
+from experiments.tags import Tags
 
 
 class SentenceEncoder(Encoder):
