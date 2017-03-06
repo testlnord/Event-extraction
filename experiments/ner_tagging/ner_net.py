@@ -11,10 +11,15 @@ from experiments.data_utils import split
 from experiments.ner_tagging.ner_fetcher import NERDataFetcher
 from experiments.sequencenet import SequenceNet
 
+# For testing and training
+from spacy.en import English
+from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
+from experiments.tags import CategoricalTags
+
 
 class NERNet(SequenceNet):
     def compile_model(self):
-        # architecture is from the paper
+        # Architecture is from the original paper: arxiv.org/pdf/1608.06757.pdf
         output_len = 150
         blstm_cell_size = 20
         lstm_cell_size = 20
@@ -84,48 +89,28 @@ class NERNet(SequenceNet):
         classes_batch = [classes[:orig_length] for orig_length, classes in zip(orig_lengths, classes_batch)]
         return classes_batch
 
-# todo:
-def eye_test(nlp):
-    texts = [
-        '010 is the tenth album from Japanese Punk Techno band The Mad Capsule Markets .',
 
+class SpacyTokenizer:
+    """
+    Only for training NER Network (because NgramEncoder needs spacy.Token inputs)
+    """
+    def __init__(self, nlp):
+        self.nlp = nlp
+
+    def __call__(self, data_gen):
+        for data, tag in data_gen:
+            yield self.encode_data(data), tag
+
+    def encode_data(self, data):
+        encoded = [self.nlp(token) for token in data]
+        return encoded
+
+
+def eye_test(net, nlp):
+    texts = [
         'Founding member Kojima Minoru played guitar on Good Day , and Wardanceis cover '
         'of a song by UK post punk industrial band Killing Joke .',
 
-        'The Node.js Foundation , which has jurisdiction over the popular server-side JavaScript platform , '
-        'is adding the Express MVC Web framework for Node.js as an incubation project , to ensure its continued viability .',
-
-        'PyPy 5.0 also has an upgraded C-level API so that Python scripts using C components '
-        '( for example , by way of  Cython ) are both more compatible and faster .',
-
-        'The Ruby on Rails team released versions 4.2.5.1 , 4.1.14.1 , and 3.2.22.1 of the framework last week '
-        'to address multiple issues in Rails and rails - html - sanitizer , a Ruby gem that sanitizes HTML input .',
-
-
-        "Google will be dropping its own implementation of Java 's APIs in Android N in favour of the open-source OpenJDK .",
-
-        "Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers .",
-
-        "Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program .",
-
-        "Adobe has also released version 21.0.0.176 of AIR Desktop Runtime , AIR SDK , "
-        "AIR SDK & Compiler and AIR for Android , which contain Flash Player components .",
-
-    ]
-
-    trues = [
-        'B O O O O O B O O O B I I I O',
-        'O O B I O O O B I O O B O O O O O B O O O O B I O',
-        'O B I O O O O O O O O B O O O O O B I I I O B O O O O O O O O O O O',
-        'B I O O O O B I O O B O O B O O O O O O O O B O O O O O O O O',
-        'O B I I O O O O O O O O O O O O O O O O O O O B O B I I I I O O B O O O B O O',
-        '',
-        '',
-        '',
-        '',
-    ]
-
-    texts2 = [
         "Google will be dropping its own implementation of Java's APIs in Android N in favour of the open-source OpenJDK."
         "Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers."
         , "Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program."
@@ -139,53 +124,75 @@ def eye_test(nlp):
         , "Apple's  trendy Swift language  is getting a Web framework inspired by the popular  Ruby on Rails  MVC framework."
         , "The Ruby on Rails team released versions 4.2.5.1, 4.1.14.1, and 3.2.22.1 of the framework last week to address multiple issues in Rails and rails-html-sanitizer, a Ruby gem that sanitizes HTML input."
         , "Ruby on Rails fixed six vulnerabilities in versions 3.x, 4.1.x, 4.2.x, and Rails 5.0 beta and three in rails-html-sanitizer"
-        "PyPy applications can now be embedded within a C program, allowing developers to use both C and Python, regardless of which language they're most comfortable with."
+          "PyPy applications can now be embedded within a C program, allowing developers to use both C and Python, regardless of which language they're most comfortable with."
         , "PyPy 5.0 also has an upgraded C-level API so that Python scripts using C components (for example, by way of  Cython ) are both more compatible and faster."
         , "Objective C has fallen out of the top ten most popular coding languages for the first time in five years, according to the Tiobe index."
         , "Node.js Foundation just released v.4 of it's popular platform – containing the latest version of Javascript's V8 engine + support for all ARM processors."
     ]
 
     prepared_texts = [nlp(text)[:] for text in texts]
-    for i, (text, true, pred) in enumerate(zip(texts, trues, net.predict_batch(prepared_texts))):
+    for i, (ptext, pred) in enumerate(zip(prepared_texts, net.predict_batch(prepared_texts))):
+        str_pred = [' '] * len(str(ptext))
+        for token, pred_i in zip(ptext, pred):
+            index = token.idx
+            str_pred[index] = str(pred_i)
         print('#{}'.format(i))
-        print('text:', text)
-        print('pred:', pred)
-        print('true: ', true)
+        print('text:', ptext)
+        print('pred:', ''.join(str_pred))
 
-    prepared_texts = [nlp(text)[:] for text in texts2]
-    for i, (text, pred) in enumerate(zip(texts2, net.predict_batch(prepared_texts))):
-        print('#{}'.format(i))
-        print('text:', text)
-        print('pred:', pred)
+
+def train():
+    timesteps = 150
+    batch_size = 16
+    epoch_size = 8192
+    epochs = 13
+    nb_val_samples = 1024
+    nb_test_samples = 16384
+    # nb_test_samples = 28768
+
+    tags = CategoricalTags(('O', 'I', 'B'))
+    encoder = LetterNGramEncoder.from_vocab_file(tags)
+    # Loading existing model
+    # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
+    # model_path=None
+    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
+    # Or instantiating new model
+    net = NERNet(encoder=encoder, timesteps=timesteps, batch_size=batch_size)
+    net.compile_model()
+
+    # Loading and splitting data
+    nlp = English()
+    tokenizer = SpacyTokenizer(nlp)
+    fetcher = NERDataFetcher()
+    data = list(fetcher.objects())
+    splits = (0.1, 0.2, 0.7)
+    data_splits = split(data, splits)
+
+    # Cycle first because it is cheaper to tokenize each time than to store tokens in memory
+    data_splits = [tokenizer(cycle(data_split)) for data_split in data_splits]
+    data_val = data_splits[0]
+    data_test = data_splits[1]
+    data_train = data_splits[2]
+
+    net.train(data_train_gen=data_train, epoch_size=epoch_size, epochs=epochs,
+              data_val_gen=data_val, nb_val_samples=nb_val_samples)
+    evaluation = net.evaluate(data_test, nb_val_samples=nb_test_samples)
+    print('Evaluation: {}'.format(evaluation))
 
 
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.DEBUG)
 
-    from spacy.en import English
-    from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
-    from experiments.tags import CategoricalTags
-    nlp = English()
+    # train()
+    # exit()
 
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(tags)
-    # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
-    # model_path = 'models/model_full_epochsize{}_epoch{}.h5'.format(16384, 6)
-    model_path=None
-    net = NERNet.from_model_file(encoder=encoder, batch_size=16, model_path=model_path)
+    # net = NERNet.from_model_file(encoder=encoder, batch_size=8)
+    net = NERNet(encoder, timesteps=100, batch_size=8)
+    net.compile_model()
+    net.load_weights()
 
-    data = list(NERDataFetcher().objects())
-    splits = (0.1, 0.2, 0.7)
-    data_splits = split(data, splits)
-    data_val = cycle(data_splits[0])
-    data_test = cycle(data_splits[1])
-    data_train = cycle(data_splits[2])
-
-    net.train(data_train_gen=data_train, epoch_size=8192, epochs=13,
-              data_val_gen=data_val, nb_val_samples=1024)
-
-    net.evaluate(data_test, nb_val_samples=32768)
-    print('Evaluation: {}'.format(net.evaluate(data_test)))
-
-    # eye_test(nlp)
+    nlp = English()
+    eye_test(net, nlp)
 

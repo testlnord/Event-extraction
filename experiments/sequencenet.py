@@ -95,3 +95,13 @@ class SequenceNet:
             path = self.relpath('models', '{}_model_full.h5'.format(type(self).__name__.lower()))
         self._model.save(path)
 
+    def save_weights(self, path=None):
+        if not path:
+            path = self.relpath('models', '{}_model_weights.h5'.format(type(self).__name__.lower()))
+        self._model.save_weights(path)
+
+    def load_weights(self, weights_path=None, by_name=False):
+        if not weights_path:
+            filename = '{}_model_weights_default.h5'.format(type(self).__name__.lower())
+            weights_path = self.relpath('models', filename)
+        self._model.load_weights(weights_path, by_name=by_name)
