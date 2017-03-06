@@ -25,8 +25,8 @@ class NERDataFetcher:
                 else:
                     if len(sent) > 1:
                         yield sent, self._check_tags(tags)
-                    sent.clear()
-                    tags.clear()
+                    sent = []
+                    tags = []
 
     def _wikiner_wp3(self, path='../data/aij-wikiner-en-wp3.txt'):
         with open(path) as f:

@@ -3,7 +3,7 @@ import os
 import pickle
 from collections import Counter
 
-from spacy.tokens import Span
+from spacy.tokens import Token
 
 from experiments.abstract_encoder import Encoder
 from experiments.tags import Tags
@@ -49,10 +49,10 @@ class LetterNGramEncoder(Encoder):
     def decode_tags(self, tags_encoded):
         return [self.tags.decode(tag_enc) for tag_enc in tags_encoded]
 
-    def encode_data(self, text: Span):
+    def encode_data(self, text):
         return [self.encode_token(token) for token in text]
 
-    def encode_token(self, token):
+    def encode_token(self, token: Token):
         t = str(token)
         tl = t.lower()
         ngrams = list(self.ngrams(tl))
@@ -141,8 +141,9 @@ class LetterNGramEncoder(Encoder):
             self.vocab = self.vocab[:core_length]
             self._vector_length = vector_length
         else:
+            # todo: when make_dict() then these repeated identical values lost and vector not as long as expected
             # just add useless ngrams to the vocab to keep vector length as desired
-            nb_pad_values = vocab_length - core_length
+            nb_pad_values = core_length - vocab_length
             pad_value = self.dummy_char * self.ngram
             self.vocab.extend([pad_value] * nb_pad_values)
             self._vector_length = vector_length

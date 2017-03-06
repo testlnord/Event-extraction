@@ -106,7 +106,7 @@ class Padder:
         # it is the thing which dimensions and how (prepend or append) to pad
         pad_mask = ((0, zeros), (0, 0))
         cut = min(ones, self.pad_to_length) if self.cut_too_long else ones
-        nb_pad = len(args) if self.pad_to_length < 0 else self.pad_to_length
+        nb_pad = len(args) if self.pad_first_n < 0 else self.pad_first_n
 
         sample_weights = np.array([1] * cut + [0] * zeros)
         res = [np.array(arg) for arg in args]
