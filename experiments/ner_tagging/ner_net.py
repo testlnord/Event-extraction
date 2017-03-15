@@ -144,11 +144,14 @@ def eye_test(net, nlp):
 def train():
     timesteps = 150
     batch_size = 16
-    epoch_size = 8192
+    epoch_steps = 512
     epochs = 13
-    nb_val_samples = 1024
-    nb_test_samples = 16384
-    # nb_test_samples = 28768
+    val_steps = 64
+    test_steps = 1024
+    # epoch_size = batch_size * epoch_steps
+    # nb_val_samples = batch_size * val_steps
+    # nb_test_samples = batch_size * test_steps
+    # nb_test_samples = 28768 # (almost?) true number of unique test samples in dataset
 
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(tags)
@@ -174,9 +177,9 @@ def train():
     data_test = data_splits[1]
     data_train = data_splits[2]
 
-    net.train(data_train_gen=data_train, epoch_size=epoch_size, epochs=epochs,
-              data_val_gen=data_val, nb_val_samples=nb_val_samples)
-    evaluation = net.evaluate(data_test, nb_val_samples=nb_test_samples)
+    net.train(data_train_gen=data_train, steps_per_epoch=epoch_steps, epochs=epochs,
+              data_val_gen=data_val, validation_steps=val_steps)
+    evaluation = net.evaluate(data_test, steps=test_steps)
     print('Evaluation: {}'.format(evaluation))
 
 

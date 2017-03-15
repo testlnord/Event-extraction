@@ -44,8 +44,8 @@ class SequenceNet:
         log.info('{}: loaded model from path {}'.format(cls.__name__, model_path))
         return net
 
-    def train(self, data_train_gen, epochs, epoch_size,
-              data_val_gen, nb_val_samples,
+    def train(self, data_train_gen, epochs, steps_per_epoch,
+              data_val_gen, validation_steps,
               save_epoch_models=True, dir_for_models='models',
               log_for_tensorboard=True, save_history=True, dir_for_logs='logs',
               max_q_size=2):
@@ -56,10 +56,11 @@ class SequenceNet:
         data_val = self._make_data_gen(data_val_gen)
         callbacks = []
 
+        epochsize = steps_per_epoch * self.batch_size
         if save_epoch_models:
             filepath = self.relpath(
                 dir_for_models,
-                '{}_model_full_epochsize{}'.format(type(self).__name__.lower(), epoch_size)
+                '{}_model_full_epochsize{}'.format(type(self).__name__.lower(), epochsize)
                 + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
             )
             mcheck_cb = ModelCheckpoint(filepath, verbose=0, save_weights_only=False, mode='auto')
@@ -69,22 +70,22 @@ class SequenceNet:
             callbacks.append(tb_cb)
 
         hist = self._model.fit_generator(data_train,
-                                         samples_per_epoch=epoch_size, nb_epoch=epochs,
+                                         steps_per_epoch=steps_per_epoch, epochs=epochs,
                                          max_q_size=max_q_size,
-                                         validation_data=data_val, nb_val_samples=nb_val_samples,
+                                         validation_data=data_val, validation_steps=validation_steps,
                                          callbacks=callbacks
                                          )
         if save_history:
             hist_path = self.relpath(
-                'logs', 'history_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), epoch_size, epochs))
+                'logs', 'history_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), epochsize, epochs))
             with open(hist_path, 'w') as f:
                 import json
                 json.dump(hist.history, f)
 
-    def evaluate(self, data_gen, nb_val_samples, max_q_size=2):
+    def evaluate(self, data_gen, steps, max_q_size=2):
         log.info('{}: Evaluating...'.format(type(self).__name__))
         data_val = self._make_data_gen(data_gen)
-        return self._model.evaluate_generator(data_val, max_q_size=max_q_size, val_samples=nb_val_samples)
+        return self._model.evaluate_generator(data_val, max_q_size=max_q_size, steps=steps)
 
     def _make_data_gen(self, data_gen):
         data_gen = self.padder(self._encoder.encode(data) for data in data_gen)

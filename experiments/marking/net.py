@@ -59,7 +59,7 @@ if __name__ == "__main__":
         data_test = cycle(data_splits[1])
         data_train = cycle(data_splits[2])
 
-        net.train(data_train_gen=data_train, epoch_size=1024, epochs=10,
-                  data_val_gen=data_val, nb_val_samples=128)
+        net.train(data_train_gen=data_train, steps_per_epoch=64, epochs=10,
+                  data_val_gen=data_val, validation_steps=8)
     else:
-        log.warning('ClassifierNet training: file {} with data was not found! Please, create dataset first.')
+        log.warning('ClassifierNet training: file {} with data was not found!')
