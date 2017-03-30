@@ -19,18 +19,27 @@ from experiments.tags import CategoricalTags
 
 class NERNet(SequenceNet):
     def compile_model(self):
-        # Architecture is from the original paper: arxiv.org/pdf/1608.06757.pdf
-        output_len = 150
-        blstm_cell_size = 20
-        lstm_cell_size = 20
+        # Architecture from the original paper (arxiv.org/pdf/1608.06757.pdf):
+        # Dense(150) + Bidir(LSTM(20)) + LSTM(20) + Dense(3 classes) without dropout
+        dense1_output_len = 160
+        lstm1_cell_size = 32
+        lstm2_cell_size = 32
+        # dense1_output_len = 256
+        # lstm1_cell_size = 64
+        # lstm2_cell_size = 64
+        # lstm_dropout = 0.5
+        # lstm_rdropout = 0.5
 
         m = Sequential()
         m.add(Masking(input_shape=(self.timesteps, self.x_len)))
-        m.add(TimeDistributed(Dense(output_len, activation='tanh'),
+        m.add(TimeDistributed(Dense(dense1_output_len, activation='tanh'),
                               input_shape=(self.timesteps, self.x_len)))
-        m.add(Bidirectional(LSTM(blstm_cell_size, return_sequences=True),
-                            merge_mode='concat'))
-        m.add(LSTM(lstm_cell_size, return_sequences=True))
+        m.add(Bidirectional(LSTM(lstm1_cell_size, return_sequences=True,
+                                 # dropout=lstm_dropout, recurrent_dropout=lstm_rdropout,
+                                 ), merge_mode='concat'))
+        m.add(LSTM(lstm2_cell_size, return_sequences=True,
+                                 # dropout=lstm_dropout, recurrent_dropout=lstm_rdropout,
+                                 ))
         m.add(TimeDistributed(Dense(self.nbclasses, activation='softmax')))
 
         m.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')
@@ -106,45 +115,31 @@ class SpacyTokenizer:
         return encoded
 
 
-def eye_test(net, nlp):
-    texts = [
+def nernet_sanity_check(net, nlp):
+    from itertools import chain
+    samples0 = [
         'Founding member Kojima Minoru played guitar on Good Day , and Wardanceis cover '
         'of a song by UK post punk industrial band Killing Joke .',
-
-        "Google will be dropping its own implementation of Java's APIs in Android N in favour of the open-source OpenJDK."
-        "Version 1.0 of JetBrains' Kotlin programmatic language is now available for JVM and Android developers."
-        , "Microsoft has released a new mobile version of Windows 10 for developers subscribing to the Windows Insider program."
-        , "Microsoft has announced a new pricing model for its Visual Studio platform."
-        , "Adobe has also released version 21.0.0.176 of AIR Desktop Runtime, AIR SDK, AIR SDK & Compiler and AIR for Android, which contain Flash Player components."
-        , "Beginning with iOS 8, iPhones, iPads, and iPad, Touches are encrypted using a key derived from the user-selected passcode."
-        , "Yesterday, Microsoft capitulated and  started publishing changelogs  and  release information  for Windows 10 patches."
-        , "Microsoft has updated Visual Studio Taco (Tools for Apache Cordova), keying in on error-reporting and project-template improvements."
-        , "An anonymous reader writes:  Ubuntu 16.04 LTS and newer will  no longer be supporting AMD's widely-used Catalyst Linux (fglrx) driver ."
-        , "China's Tencent has pulled out of Windows Phone development and has criticised Microsoft's commitment to the platform."
-        , "Apple's  trendy Swift language  is getting a Web framework inspired by the popular  Ruby on Rails  MVC framework."
-        , "The Ruby on Rails team released versions 4.2.5.1, 4.1.14.1, and 3.2.22.1 of the framework last week to address multiple issues in Rails and rails-html-sanitizer, a Ruby gem that sanitizes HTML input."
-        , "Ruby on Rails fixed six vulnerabilities in versions 3.x, 4.1.x, 4.2.x, and Rails 5.0 beta and three in rails-html-sanitizer"
-          "PyPy applications can now be embedded within a C program, allowing developers to use both C and Python, regardless of which language they're most comfortable with."
-        , "PyPy 5.0 also has an upgraded C-level API so that Python scripts using C components (for example, by way of  Cython ) are both more compatible and faster."
-        , "Objective C has fallen out of the top ten most popular coding languages for the first time in five years, according to the Tiobe index."
-        , "Node.js Foundation just released v.4 of it's popular platform – containing the latest version of Javascript's V8 engine + support for all ARM processors."
     ]
 
-    prepared_texts = [nlp(text)[:] for text in texts]
-    for i, (ptext, pred) in enumerate(zip(prepared_texts, net.predict_batch(prepared_texts))):
-        str_pred = [' '] * len(str(ptext))
-        for token, pred_i in zip(ptext, pred):
-            index = token.idx
-            str_pred[index] = str(pred_i)
-        print('#{}'.format(i))
-        print('text:', ptext)
-        print('pred:', ''.join(str_pred))
+    samples_path = NERNet.relpath("data", "samples.txt")
+    with open(samples_path) as filefilefile:
+        samples = list(filefilefile.readlines())
+        prepared_texts = [nlp(text)[:] for text in chain(samples0, samples)]
+        for i, (ptext, pred) in enumerate(zip(prepared_texts, net.predict_batch(prepared_texts))):
+            str_pred = [' '] * len(str(ptext))
+            for token, pred_i in zip(ptext, pred):
+                index = token.idx
+                str_pred[index] = str(pred_i)
+            print('#{}'.format(i))
+            print('text:', ptext)
+            print('pred:', ''.join(str_pred))
 
 
 def train():
     timesteps = 150
     batch_size = 16
-    epoch_steps = 512
+    epoch_steps = 1024
     epochs = 13
     val_steps = 64
     test_steps = 1024
@@ -156,12 +151,11 @@ def train():
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(tags)
     # Loading existing model
-    # model_path = 'models/model_full_epochsize{}_epoch{:02d}_valloss{}.h5'.format(8192, 8, 0.23)
-    # model_path=None
-    # net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
+    model_path = NERNet.relpath("models", "nernet_model_{}_full_epochsize{}_epoch{}.h5".format("i0_iter1", 8192, 12))
+    net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
     # Or instantiating new model
-    net = NERNet(encoder=encoder, timesteps=timesteps, batch_size=batch_size)
-    net.compile_model()
+    # net = NERNet(encoder=encoder, timesteps=timesteps, batch_size=batch_size)
+    # net.compile_model()
 
     # Loading and splitting data
     nlp = English()
@@ -177,10 +171,11 @@ def train():
     data_test = data_splits[1]
     data_train = data_splits[2]
 
+    model_prefix = "i0_iter2"
     net.train(data_train_gen=data_train, steps_per_epoch=epoch_steps, epochs=epochs,
-              data_val_gen=data_val, validation_steps=val_steps)
-    evaluation = net.evaluate(data_test, steps=test_steps)
-    print('Evaluation: {}'.format(evaluation))
+              data_val_gen=data_val, validation_steps=val_steps, model_prefix=model_prefix)
+    # evaluation = net.evaluate(data_test, steps=test_steps)
+    # print('Evaluation: {}'.format(evaluation))
 
 
 if __name__ == "__main__":
@@ -189,13 +184,17 @@ if __name__ == "__main__":
     # train()
     # exit()
 
+    # Some simple testing
     tags = CategoricalTags(('O', 'I', 'B'))
     encoder = LetterNGramEncoder.from_vocab_file(tags)
-    # net = NERNet.from_model_file(encoder=encoder, batch_size=8)
-    net = NERNet(encoder, timesteps=100, batch_size=8)
-    net.compile_model()
-    net.load_weights()
+    path = NERNet.relpath("models","nernet_model_{}_full_epochsize{}_epoch{}.h5".format("i0_iter2", 16384, 12))
+    path = None  # loading default model
+    net = NERNet.from_model_file(encoder=encoder, batch_size=4, model_path=path)
+    # That way (lading weights separately from model) we can adjust number of timesteps
+    # net = NERNet(encoder, timesteps=100, batch_size=8)
+    # net.compile_model()
+    # net.load_weights()
 
     nlp = English()
-    eye_test(net, nlp)
+    nernet_sanity_check(net, nlp)
 

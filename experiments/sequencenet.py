@@ -2,7 +2,7 @@ import logging as log
 import os
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from experiments.data_utils import Padder, BatchMaker
+from data_utils import Padder, BatchMaker
 
 
 class SequenceNet:
@@ -35,9 +35,9 @@ class SequenceNet:
             raise ValueError('encoder.vector_length is not consistent with the input of '
                              'loaded model ({} != {})'.format(encoder.vector_length, x_len))
         _, timesteps, nbclasses = model.layers[-1].output_shape
-        if nbclasses != encoder.tags.nbtags:
-            raise ValueError('encoder.tags.nbtags is not consistent with the output of '
-                             'loaded model ({} != {})'.format(encoder.tags.nbtags, nbclasses))
+        if nbclasses != encoder.nbclasses:
+            raise ValueError('encoder.nbclasses is not consistent with the output of '
+                             'loaded model ({} != {})'.format(encoder.nbclasses, nbclasses))
 
         net = cls(encoder, timesteps, batch_size)
         net._model = model
@@ -46,7 +46,7 @@ class SequenceNet:
 
     def train(self, data_train_gen, epochs, steps_per_epoch,
               data_val_gen, validation_steps,
-              save_epoch_models=True, dir_for_models='models',
+              save_epoch_models=True, model_prefix="", dir_for_models='models',
               log_for_tensorboard=True, save_history=True, dir_for_logs='logs',
               max_q_size=2):
         """Train model, maybe with checkpoints for every epoch and logging for tensorboard"""
@@ -60,8 +60,9 @@ class SequenceNet:
         if save_epoch_models:
             filepath = self.relpath(
                 dir_for_models,
-                '{}_model_full_epochsize{}'.format(type(self).__name__.lower(), epochsize)
-                + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
+                '{}_model_{}_full_epochsize{}'.format(type(self).__name__.lower(), model_prefix, epochsize)
+                + '_epoch{epoch:02d}.h5'
+                # + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
             )
             mcheck_cb = ModelCheckpoint(filepath, verbose=0, save_weights_only=False, mode='auto')
             callbacks.append(mcheck_cb)
@@ -77,7 +78,7 @@ class SequenceNet:
                                          )
         if save_history:
             hist_path = self.relpath(
-                'logs', 'history_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), epochsize, epochs))
+                'logs', 'history_{}_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), model_prefix, epochsize, epochs))
             with open(hist_path, 'w') as f:
                 import json
                 json.dump(hist.history, f)
