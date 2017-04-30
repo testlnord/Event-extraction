@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 
 
+-- TODO: add extractor version?
 CREATE TABLE IF NOT EXISTS raw_texts (
     source_uid int NOT NULL REFERENCES sources, -- if we'll need add texts manually, then just use special source type, e.g. 'manual'
 
@@ -35,8 +36,9 @@ CREATE TABLE IF NOT EXISTS extractions (
     relation int4range NOT NULL CHECK (NOT isempty(relation)),
     object_min int4range NOT NULL CHECK (NOT isempty(object_min)),
     object_max int4range NOT NULL CHECK (NOT isempty(object_max)),
-    dt_extracted timestamp NOT NULL DEFAULT now(),
 
+    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
+    dt_extracted timestamp NOT NULL DEFAULT now(),
     extraction_uid int PRIMARY KEY
 );
 
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS entities (
     entity_span int4range NOT NULL CHECK (NOT isempty(entity_span)),
     entity_text text NOT NULL CHECK (entity_text <> ''),
 
+    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
     entity_uid int PRIMARY KEY
 );
@@ -62,12 +65,14 @@ CREATE TABLE IF NOT EXISTS relations (
     relation_span int4range NOT NULL CHECK (NOT isempty(relation_span)),
     relation_text text NOT NULL CHECK (relation_text <> ''),
 
+    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
     relation_uid int PRIMARY KEY
 );
 
 
 ---- Structured Part ----
+-- TODO: add extractor version?
 
 
 CREATE TABLE IF NOT EXISTS f_entities (

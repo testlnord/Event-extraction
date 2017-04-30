@@ -38,46 +38,46 @@ class DBGate:
                 RETURNING text_uid''', (source_id, t))
                 return curs.fetchone()[0]
 
-    def add_extraction(self, e, parent_id):
+    def add_extraction(self, e, parent_id, extractor_ver):
         with self.cnn:
             with self.cnn.cursor() as curs:
-                args = [parent_id] + list(map(self._seq2range, [e.subject_span, e.relation_span, e.object_min_span, e.object_max_span]))
+                args = [parent_id] + list(map(self._seq2range, [e.subject_span, e.relation_span, e.object_min_span, e.object_max_span])) + [extractor_ver]
                 curs.execute('''
-                INSERT INTO extractions (span_uid, subject, relation, object_min, object_max)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO extractions (span_uid, subject, relation, object_min, object_max, extractor_ver)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING extraction_uid''', args)
                 return curs.fetchone()[0]
 
-    def add_entity(self, ent_span, ent_text, parent_id):
+    def add_entity(self, ent_span, ent_text, parent_id, extractor_ver):
         with self.cnn:
             with self.cnn.cursor() as curs:
                 curs.execute('''
                 INSERT INTO entities (extraction_uid, entity_span, entity_text)
-                VALUES (%s, %s, %s)
-                RETURNING entity_uid''', (parent_id, self._seq2range(ent_span), ent_text))
+                VALUES (%s, %s, %s, %s)
+                RETURNING entity_uid''', (parent_id, self._seq2range(ent_span), ent_text, extractor_ver))
                 return curs.fetchone()[0]
 
-    def add_relation(self, rel_span, rel_text, parent_id):
+    def add_relation(self, rel_span, rel_text, parent_id, extractor_ver):
         with self.cnn:
             with self.cnn.cursor() as curs:
                 curs.execute('''
-                INSERT INTO relations (extraction_uid, relation_span, relation_text)
-                VALUES (%s, %s, %s)
-                RETURNING entity_uid''', (parent_id, self._seq2range(rel_span), rel_text))
+                INSERT INTO relations (extraction_uid, relation_span, relation_text, extractor_ver)
+                VALUES (%s, %s, %s, %s)
+                RETURNING entity_uid''', (parent_id, self._seq2range(rel_span), rel_text, extractor_ver))
                 return curs.fetchone()[0]
 
     # todo: check if table exists (i.e. attr is valid)
-    def add_attribute(self, attr_span, attr_text, extraction_uid, attr_name):
+    def add_attribute(self, attr_span, attr_text, extraction_uid, attr_name, extractor_ver):
         with self.cnn:
             with self.cnn.cursor() as curs:
                 table_name = 'attr_{}'.format(attr_name)
                 q = sql.SQL('''
-                INSERT INTO {} (extraction_uid, attr_span, attr_text)
-                VALUES (%s, %s) RETURNING attr_uid'''.format(sql.Identifier(table_name)))
-                curs.execute(q, (extraction_uid, self._seq2range(attr_span), attr_text))
+                INSERT INTO {} (extraction_uid, attr_span, attr_text, extractor_ver)
+                VALUES (%s, %s, %s, %s) RETURNING attr_uid'''.format(sql.Identifier(table_name)))
+                curs.execute(q, (extraction_uid, self._seq2range(attr_span), attr_text, extractor_ver))
                 return curs.fetchone()[0]
 
-    # todo: add extractor version and selecting by it
+    # todo: add select by extraction_ver
     # todo: add select by source_type
 
     # todo:
