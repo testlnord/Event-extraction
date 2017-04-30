@@ -1,36 +1,58 @@
-# from corenlp_pywrap import pywrap
-from pycorenlp import StanfordCoreNLP
+import logging as log
+from collections import defaultdict
 from pprint import pprint
 
+from pycorenlp import StanfordCoreNLP
 from spacy.en import English
-from event import Event
-from experiments.extraction import *
 
-from collections import defaultdict
-# import operator as op
-# from functools import reduce
-# from intervals import IntInterval
+from experiments.extraction.extraction import Extraction
+
 
 class StanfordOpenIE:
-    # oie_pipeline = "tokenize,ssplit,pos,depparse,natlog,openie"
-    output_format = "json"
+    version = 1  # todo: use CoreNLP.OpenIE version?
+    oie_pipeline = "tokenize,ssplit,pos,lemma,depparse,natlog,openie"
+    # oie_pipeline = "tokenize,ssplit,pos,lemma,ner,depparse,natlog,mention,coref,openie"
+    properties = {
+        'annotators': oie_pipeline,
+        # 'annotators': 'openie',
+        'outputFormat': 'json',
+        'openie.triple.strict': 'false',
+        'openie.resolve_coref': 'true',
+    }
 
     def __init__(self, port=9000):
         # default CoreNLP port
         host = "localhost"
         url = "http://{}:{}".format(host, port)
-        self.cn = StanfordCoreNLP(url)
+        if self._reachable(host, port):
+            self.cn = StanfordCoreNLP(url)
+            log.info('StanfordOpenIE: Connected to Stanford CoreNLP server')
+        else:
+            raise ConnectionError('Stanford CoreNLP server is not running on ({}, {})!'.format(host, port))
+
+    def _reachable(self, host, port):
+        from socket import socket, error
+        s = socket()
+        try:
+            s.connect((host, port))
+            return True
+        except error:
+            return False
+
+    def process(self, sentence):
+        output = self.cn.annotate(str(sentence), properties=self.properties)
+        output = output['sentences'][0]
+        rels = output['openie']
+        tokens = output['tokens']
+
+        for e in self._extract(sentence, rels, tokens):
+            yield e
 
     def get_relations(self, sentences):
-        properties = {
-            # 'annotators': self.oie_pipeline,
-            'annotators': 'openie',
-            'outputFormat': self.output_format,
-            'openie.triple.strict': 'false',
-            'openie.resolve_coref': 'false',
-        }
         for i, sent in enumerate(sentences):
-            output = self.cn.annotate(str(sent), properties=properties)
+            log.info('Sending data to CoreNLP server...')
+            output = self.cn.annotate(str(sent), properties=self.properties)
+            log.info('Received data from CoreNLP server')
             output = output['sentences'][0]
             rels = output['openie']
             tokens = output['tokens']
@@ -42,10 +64,7 @@ class StanfordOpenIE:
             print('NEXT', i)
             print(sent)
             # pprint(tokens)
-            for e in self._extract(sent, rels, tokens):
-                print()
-                print('S0: ', e.str2)
-                print('S1: ', e)
+            if False:
                 for relation in rels:
                     # e = self.relation2event(sent, relation, tokens)
                     _subj = relation['subject']
@@ -55,10 +74,18 @@ class StanfordOpenIE:
                     print(' C: ', '; '.join([_subj, _rel, _obj]))
                     # print(' S: ', e)
 
+            for e in self._extract(sent, rels, tokens):
+                print()
+                old = e.object_max_span
+                # ne_filter.match(e)
+                if e.object_max_span != old:
+                    print('S0: ', e.str2)
+                    print('S1: ', e._substring(old))
+                    # print('SF: ', e.object_max)
+
     def _extract(self, span, relations, tokens):
         all_rels = defaultdict(lambda: set())
 
-        # todo: find min and max simultaneously in one pass in first loop?
         for relation in relations:
             subj_span = relation['subjectSpan']
             rel_span = relation['relationSpan']
@@ -68,7 +95,6 @@ class StanfordOpenIE:
             rel_span = self._corenlp_span_to_spacy_span(rel_span, span, tokens)
             obj_span = self._corenlp_span_to_spacy_span(obj_span, span, tokens)
 
-            # todo: 1hash by whole intervals or their roots? -- WHOLE INTERVALS
             all_rels[(subj_span, rel_span)].add(obj_span)
 
         def spanlen(s): return s[1] - s[0]
@@ -76,8 +102,23 @@ class StanfordOpenIE:
             min_subtree = min(related_rels, key=spanlen)
             max_subtree = max(related_rels, key=spanlen)
 
-            e = Extraction3(span, subj_span, rel_span, min_subtree, max_subtree)
-            yield e
+            # Remove intersection between spans
+            min_subtree = self._disjoin(subj_span, min_subtree)
+            min_subtree = self._disjoin(rel_span, min_subtree)
+            max_subtree = self._disjoin(subj_span, max_subtree)
+            max_subtree = self._disjoin(rel_span, max_subtree)
+
+            yield Extraction(span, subj_span, rel_span, min_subtree, max_subtree)
+
+    def _disjoin(self, main, second):
+        """Remove intersection (if it exists) between main and second from the second"""
+        a0, b0 = main
+        a1, b1 = second
+        if a0 <= a1 < b0:
+            a1 = b0
+        elif a0 < b1 <= b0:
+            b1 = a0
+        return a1, b1
 
     def _corenlp_span_to_spacy_span(self, corenlp_span, spacy_span, tokens):
         cai, cbi = corenlp_span
@@ -99,22 +140,9 @@ class StanfordOpenIE:
         offset = (spacy_token_first, spacy_token_last)
         return offset
 
-
-
-    ############################## temporal
-    def full_relation2extraction(self, span, relation, tokens):
-        _subj = relation['subject']
-        _rel = relation['relation']
-        _obj = relation['object']
-        _subj_span = relation['subjectSpan']
-        _rel_span = relation['relationSpan']
-        _obj_span = relation['objectSpan']
-        _subj = self._extract_part(span, _subj, _subj_span, tokens)
-        _obj = self._extract_part(span, _obj, _obj_span, tokens)
-        _rel = self._extract_part(span, _rel, _rel_span, tokens)
-        return Extraction2(span, subject_indices=_subj, relation_indices=_rel, object_indices=_obj)
-
+    # old, not tested
     def _extract_part(self, spacy_span, part, corenlp_span, tokens):
+        # extract tokens by char offsets
         cai, cbi = corenlp_span
         ca = tokens[cai]['characterOffsetBegin']
         cb = tokens[cbi]['characterOffsetEnd']
@@ -142,25 +170,24 @@ class StanfordOpenIE:
                 itoken += 1
         return result_token_offsets
 
-    def relation2event(self, span, relation, tokens):
-        # todo: really test char offset extraction vs. token offset extraction
-        _subj_span = relation['subjectSpan']
-        _rel_span = relation['relationSpan']
-        _obj_span = relation['objectSpan']
 
-        # Find correspondence between CoreNLP tokens and Spacy tokens using information about char offsets
-        _subj_span = self._corenlp_span_to_spacy_span(_subj_span, span, tokens)
-        _rel_span = self._corenlp_span_to_spacy_span(_rel_span, span, tokens)
-        _obj_span = self._corenlp_span_to_spacy_span(_obj_span, span, tokens)
-
-        return Extraction(span, _subj_span, _rel_span, _obj_span)
-
-
-
+from experiments.extraction.extraction_filters import Extractor
 if __name__ == "__main__":
+    log.basicConfig(format='%(levelname)s:%(message)s', level=log.INFO)
+
     cn = StanfordOpenIE()
     nlp = English()
+    # nlp = spacy.load('en')
+    extractor = Extractor(nlp)
     with open("/home/hades/projects/Event-extraction/experiments/data/samples.txt") as f:
-        sents = [nlp(sent)[:] for sent in f.readlines()]
+        sents = [nlp(sent) for sent in f.readlines()]
+        for sent in sents:
+            for e in cn.process(sent):
+                print()
+                print('SS: ', e.span)
+                print('S0: ', e.str2)
+                print('S1: ', e)
+                for fe in extractor.process(e):
+                    print("FE: ", fe)
         # sents = list(f.readlines())
-    cn.get_relations(sents)
+    # cn.get_relations(sents)
