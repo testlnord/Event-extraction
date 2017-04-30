@@ -3,7 +3,7 @@ from configparser import ConfigParser
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import NumericRange
-from experiments.extraction.extraction import Extraction3
+from experiments.extraction.extraction import Extraction
 
 
 class DBGate:
@@ -21,6 +21,7 @@ class DBGate:
                                     .format(dbname, login, password, host),
                                     autocommit=True
                                     )
+        # todo: autocommit? single cursor?
         # todo: test if connected
 
     # todo:
@@ -36,6 +37,15 @@ class DBGate:
                 INSERT INTO raw_texts (source_uid, raw_text) 
                 VALUES (%s, %s) 
                 RETURNING text_uid''', (source_id, t))
+                return curs.fetchone()[0]
+
+    def add_span(self, span_text, text_pos, text_id):
+        with self.cnn:
+            with self.cnn.cursor() as curs:
+                curs.execute('''
+                INSERT INTO spans (text_uid, text_pos, span_text) 
+                VALUES (%s, %s, %s) 
+                RETURNING text_uid''', (text_id, text_pos, span_text))
                 return curs.fetchone()[0]
 
     def add_extraction(self, e, parent_id, extractor_ver):
@@ -116,7 +126,7 @@ class DBGate:
                 objmin_span = self._range2tuple(things[3])
                 objmax_span = self._range2tuple(things[4])
                 span = self.nlp(things[5])
-                yield things[0], Extraction3(span, subj_span, rel_span, objmin_span, objmax_span)
+                yield things[0], Extraction(span, subj_span, rel_span, objmin_span, objmax_span)
 
     def _range2tuple(self, range):
         lower = range.lower + int(not range.lower_inc)

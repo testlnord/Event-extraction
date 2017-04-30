@@ -1,11 +1,11 @@
-CREATE OR REPLACE VIEW entities_with_f AS
+﻿CREATE OR REPLACE VIEW entities_with_f AS
 SELECT f_entity_uid, entity_uid, f_entity_text, entity_text
-FROM entities NATURAL LEFT JOIN entitiy_sets NATURAL LEFT JOIN f_entities
+FROM entities NATURAL LEFT JOIN entity_sets NATURAL LEFT JOIN f_entities
 ORDER BY f_entity_uid, entity_text;
 
 
 CREATE OR REPLACE VIEW relations_with_f AS
-SELECT f_relation_uid, relatioin_uid, f_relation_text, relation_text
+SELECT f_relation_uid, relation_uid, f_relation_text, relation_text
 FROM relations NATURAL LEFT JOIN relation_sets NATURAL LEFT JOIN f_relations
 ORDER BY f_relation_uid, relation_text;
 

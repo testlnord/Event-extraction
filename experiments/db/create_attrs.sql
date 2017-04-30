@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS attr_version (
     attr_span int4range NOT NULL CHECK (NOT isempty(attr_span)),
     attr_text text NOT NULL CHECK (attr_text <> ''),
 
-    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
+    extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
     attr_uid int PRIMARY KEY
 );
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS attr_date (
     attr_span int4range NOT NULL CHECK (NOT isempty(attr_span)),
     attr_text text NOT NULL CHECK (attr_text <> ''),
 
-    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
+    extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
     attr_uid int PRIMARY KEY
 );
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS attr_location (
     attr_span int4range NOT NULL CHECK (NOT isempty(attr_span)),
     attr_text text NOT NULL CHECK (attr_text <> ''),
 
-    extractor_ver int NOT NULL CHECK (extractor_ver => 0),
+    extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
     attr_uid int PRIMARY KEY
 );
