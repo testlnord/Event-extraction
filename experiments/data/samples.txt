@@ -41,5 +41,6 @@ Google says it will also continue to support the OpenGL ES standard on Android a
 Google has updated the API for Google Maps and Android Wear, allowing better navigation features for its wearable products.
 Facebook has released an Android version of React Native, its open source project for compiling cross platform apps written in JavaScript.
 Apple has launched a new app for Android that helps users transition over to iOS devices.
-Parse has announced it's open-sourced its software development kits for iOS, Android and OS X. Parse says by open sourcing developers can better see how its code interacts with their apps, running on Parse's MBaaS platform.
 Google has released Android Wear for iOS, allowing Android Wear users to pair their wearables with iPhones running iOS 8.2+.
+Parse says by open sourcing developers can better see how its code interacts with their apps, running on Parse's MBaaS platform.
+Parse has announced it's open-sourced its software development kits for iOS, Android and OS X.
