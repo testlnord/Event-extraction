@@ -1,5 +1,6 @@
 from datetime import datetime
 from configparser import ConfigParser
+import os.path
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import NumericRange
@@ -12,19 +13,21 @@ class DBGate:
     def __init__(self, nlp):
         self.nlp = nlp
         config = ConfigParser()
-        config.read(self.config_filename)
+        root_dir = os.path.realpath(__file__).split('/')
+        root_dir = '/' + os.path.join(*root_dir[:-3])  # todo: change accordingly when moving this from 'experiments' dir
+        config_filename = os.path.join(root_dir, self.config_filename)
+        config.read(config_filename)
         login = config['db']['login']
         password = config['db']['password']
         host = config['db']['host']
         dbname = config['db']['database']
         self.cnn = psycopg2.connect('dbname={} user={} password={} host={}'
                                     .format(dbname, login, password, host),
-                                    autocommit=True
+                                    # autocommit=True  # todo: autocommit?
                                     )
-        # todo: autocommit? single cursor?
         # todo: test if connected
 
-    # todo:
+    # todo: add_source
     def add_source(self, s):
         with self.cnn:
             with self.cnn.cursor() as curs:
@@ -39,13 +42,13 @@ class DBGate:
                 RETURNING text_uid''', (source_id, t))
                 return curs.fetchone()[0]
 
-    def add_span(self, span_text, text_pos, text_id):
+    def add_span(self, span, text_pos, text_id):
         with self.cnn:
             with self.cnn.cursor() as curs:
                 curs.execute('''
                 INSERT INTO spans (text_uid, text_pos, span_text) 
                 VALUES (%s, %s, %s) 
-                RETURNING text_uid''', (text_id, text_pos, span_text))
+                RETURNING span_uid''', (text_id, text_pos, span.text))
                 return curs.fetchone()[0]
 
     def add_extraction(self, e, parent_id, extractor_ver):
@@ -73,7 +76,7 @@ class DBGate:
                 curs.execute('''
                 INSERT INTO relations (extraction_uid, relation_span, relation_text, extractor_ver)
                 VALUES (%s, %s, %s, %s)
-                RETURNING entity_uid''', (parent_id, self._seq2range(rel_span), rel_text, extractor_ver))
+                RETURNING relation_uid''', (parent_id, self._seq2range(rel_span), rel_text, extractor_ver))
                 return curs.fetchone()[0]
 
     # todo: check if table exists (i.e. attr is valid)
@@ -101,7 +104,7 @@ class DBGate:
             curs.execute('''
             SELECT text_uid, raw_text
             FROM raw_texts
-            WHERE dt_extracted => (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
+            WHERE dt_extracted >= (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
             for text_uid, raw_text in curs:
                 yield text_uid, self.nlp(raw_text)
 
@@ -110,7 +113,7 @@ class DBGate:
             curs.execute('''
             SELECT span_uid, span_text
             FROM texts_spans
-            WHERE dt_extracted => (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
+            WHERE dt_extracted >= (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
             for span_uid, span_text in curs:
                 yield span_uid, self.nlp(span_text)
 
@@ -119,7 +122,7 @@ class DBGate:
             curs.execute('''
             SELECT extraction_uid, subject, relation, object_min, object_max, span_text, span_uid
             FROM spans_extractions
-            WHERE dt_extracted => (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
+            WHERE dt_extracted >= (%s) AND dt_extracted < (%s)''', [dt_from, dt_to])
             for things in curs:
                 subj_span = self._range2tuple(things[1])
                 rel_span = self._range2tuple(things[2])

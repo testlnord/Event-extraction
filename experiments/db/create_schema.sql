@@ -1,10 +1,11 @@
+--CREATE TYPE src_type AS ENUM ('manual', 'article');
 
 -- some representation of source, i.e. description
 CREATE TABLE IF NOT EXISTS sources (
     source_type text NOT NULL CHECK (source_type <> ''), -- e.g. 'article' or 'manual'
     source text NOT NULL CHECK (source <> ''),
 
-    source_uid int PRIMARY KEY
+    source_uid serial PRIMARY KEY
 );
 
 
@@ -15,7 +16,7 @@ CREATE TABLE IF NOT EXISTS raw_texts (
     raw_text text NOT NULL CHECK (raw_text <> ''),
     dt_extracted timestamp NOT NULL DEFAULT now(),
 
-    text_uid int PRIMARY KEY
+    text_uid serial PRIMARY KEY
 );
 
 
@@ -25,7 +26,7 @@ CREATE TABLE IF NOT EXISTS spans (
 
     span_text text NOT NULL CHECK (span_text <> ''),
 
-    span_uid int PRIMARY KEY
+    span_uid serial PRIMARY KEY
 );
 
 
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS extractions (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    extraction_uid int PRIMARY KEY
+    extraction_uid serial PRIMARY KEY
 );
 
 
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS entities (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    entity_uid int PRIMARY KEY
+    entity_uid serial PRIMARY KEY
 );
 
 
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS relations (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    relation_uid int PRIMARY KEY
+    relation_uid serial PRIMARY KEY
 );
 
 
@@ -78,14 +79,14 @@ CREATE TABLE IF NOT EXISTS relations (
 CREATE TABLE IF NOT EXISTS f_entities (
     f_entity_text text NOT NULL CHECK (f_entity_text <> ''),
 
-    f_entity_uid int PRIMARY KEY
+    f_entity_uid serial PRIMARY KEY
 );
 
 
 CREATE TABLE IF NOT EXISTS f_relations (
     f_relation_text text NOT NULL CHECK (f_relation_text <> ''),
 
-    f_relation_uid int PRIMARY KEY
+    f_relation_uid serial PRIMARY KEY
 );
 
 

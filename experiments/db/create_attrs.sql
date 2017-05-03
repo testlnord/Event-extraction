@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS attr_version (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    attr_uid int PRIMARY KEY
+    attr_uid serial PRIMARY KEY
 );
 
 
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS attr_date (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    attr_uid int PRIMARY KEY
+    attr_uid serial PRIMARY KEY
 );
 
 
@@ -30,6 +30,6 @@ CREATE TABLE IF NOT EXISTS attr_location (
 
     extractor_ver int NOT NULL CHECK (extractor_ver >= 0),
     dt_extracted timestamp NOT NULL DEFAULT now(),
-    attr_uid int PRIMARY KEY
+    attr_uid serial PRIMARY KEY
 );
 
