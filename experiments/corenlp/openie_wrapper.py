@@ -10,8 +10,8 @@ from experiments.extraction.extraction import Extraction
 
 class StanfordOpenIE:
     version = 1  # todo: use CoreNLP.OpenIE version?
-    oie_pipeline = "tokenize,ssplit,pos,lemma,depparse,natlog,openie"
-    # oie_pipeline = "tokenize,ssplit,pos,lemma,ner,depparse,natlog,mention,coref,openie"
+    # oie_pipeline = "tokenize,ssplit,pos,lemma,depparse,natlog,openie"
+    oie_pipeline = "tokenize,ssplit,pos,lemma,ner,depparse,natlog,mention,coref,openie"
     properties = {
         'annotators': oie_pipeline,
         # 'annotators': 'openie',
@@ -30,6 +30,7 @@ class StanfordOpenIE:
         else:
             raise ConnectionError('Stanford CoreNLP server is not running on ({}, {})!'.format(host, port))
 
+    # todo: move to utils
     def _reachable(self, host, port):
         from socket import socket, error
         s = socket()
@@ -87,13 +88,13 @@ class StanfordOpenIE:
         all_rels = defaultdict(lambda: set())
 
         for relation in relations:
-            subj_span = relation['subjectSpan']
-            rel_span = relation['relationSpan']
-            obj_span = relation['objectSpan']
-            # Find correspondence between CoreNLP tokens and Spacy tokens using information about char offsets
-            subj_span = self._corenlp_span_to_spacy_span(subj_span, span, tokens)
-            rel_span = self._corenlp_span_to_spacy_span(rel_span, span, tokens)
-            obj_span = self._corenlp_span_to_spacy_span(obj_span, span, tokens)
+            subj_span = tuple(relation['subjectSpan'])
+            rel_span = tuple(relation['relationSpan'])
+            obj_span = tuple(relation['objectSpan'])
+
+            # subj_span = self._corenlp_span_to_spacy_span(subj_span, span, tokens)
+            # rel_span = self._corenlp_span_to_spacy_span(rel_span, span, tokens)
+            # obj_span = self._corenlp_span_to_spacy_span(obj_span, span, tokens)
 
             all_rels[(subj_span, rel_span)].add(obj_span)
 
@@ -120,7 +121,15 @@ class StanfordOpenIE:
             b1 = a0
         return a1, b1
 
+    # todo: find mistake
     def _corenlp_span_to_spacy_span(self, corenlp_span, spacy_span, tokens):
+        """
+        Translate CoreNLP's token indices to spacy's token indices using information about char offsets of tokens in original text.
+        :param corenlp_span: 
+        :param spacy_span: 
+        :param tokens: CoreNLP's tokens list with information about char offsets
+        :return: 
+        """
         cai, cbi = corenlp_span
         ca = tokens[cai]['characterOffsetBegin']
         cb = tokens[cbi]['characterOffsetEnd']
@@ -187,7 +196,9 @@ if __name__ == "__main__":
                 print('SS: ', e.span)
                 print('S0: ', e.str2)
                 print('S1: ', e)
-                for fe in extractor.process(e):
-                    print("FE: ", fe)
+                ents, rels, attrs = extractor.process(e)
+                print('ents', ents)
+                print('rels', rels)
+                print('attrs', attrs)
         # sents = list(f.readlines())
     # cn.get_relations(sents)
