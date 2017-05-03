@@ -4,7 +4,7 @@ from spacy.matcher import Matcher
 from spacy.tokens import Doc
 import spacy.attrs as a
 
-from experiments.extraction.extraction import Extraction, Part, FinalExtraction
+from experiments.extraction.extraction import Extraction, Part
 
 
 class MetaExtractor:
@@ -17,14 +17,14 @@ class MetaExtractor:
         return self.matcher(extraction.span)
 
     def intersect_acceptor(self, doc, ent_id, label, start, end, lm=0, rm=0):
-        a1, b1 = self._e[label]['span']
-        if (b1 > start-lm) and (end+rm > a1):
-            return (ent_id, label, start, end-1)
+        start1, end1 = self._e[label]['span']
+        if (end1+rm > start) and (end > start1-lm):
+            return (ent_id, label, start, end)
 
     def inclusion_acceptor(self, doc, ent_id, label, start, end, lm=0, rm=0):
-        a1, b1 = self._e[label]['span']
-        if (a1-lm < start) and (end < b1+rm):
-            return (ent_id, label, start, end-1)
+        start1, end1 = self._e[label]['span']
+        if (start1-lm <= start) and (end <= end1+rm):
+            return (ent_id, label, start, end)
 
     def make_intersect_ar(self, left_margin=0, right_margin=0):
         return lambda a,b,c,d,e: self.intersect_acceptor(a, b, c, d, e, left_margin, right_margin)
@@ -33,31 +33,17 @@ class MetaExtractor:
         return lambda a,b,c,d,e: self.inclusion_acceptor(a, b, c, d, e, left_margin, right_margin)
 
 
-class ExampleExtractor(MetaExtractor):
-    def __init__(self, nlp):
-        matcher = Matcher(nlp.vocab)
-
-        # Specify rules and set callbacks for them
-        some_pattern = [{}, {}]
-        entity_name = 'SomeEntity'  # it is to associate matches with patterns
-        self.matcher.add_entity(entity_name, acceptor=self.make_intersect_ar(2,2), on_match=self.some_callback)
-        self.matcher.add_pattern(entity_name, some_pattern, label=Part.OBJ)
-
-        super().__init__(matcher)
-
-    def some_callback(self, matcher, doc, i, matches):
-        """Callback to process match of particular rule"""
-        ent_id, label, start, end = matches[i]
-        pass
-
-
 class Extractor(MetaExtractor):
     version = 1
 
     def __init__(self, nlp):
         matcher = Matcher(nlp.vocab)
 
-        iob_pattern = [{a.ENT_IOB: 3}, {'OP': '*', a.ENT_IOB: 1}, {'OP': '?', a.LIKE_NUM: True}]
+        iob_pattern = [
+            {a.LIKE_NUM: False, a.ENT_IOB: 3},
+            {'OP': '*', a.ENT_IOB: 1},
+            {'OP': '?', a.LIKE_NUM: True}
+        ]
         entity_name = 'object'  # it is to associate matches with patterns
         matcher.add_entity(entity_name, acceptor=self.make_intersect_ar(2,2))
         matcher.add_pattern(entity_name, iob_pattern, label=Part.OBJ)
@@ -66,35 +52,64 @@ class Extractor(MetaExtractor):
         matcher.add_entity(entity_name, acceptor=self.make_intersect_ar())
         matcher.add_pattern(entity_name, iob_pattern, label=Part.SUBJ)
 
-        # todo: abstract attributes to StringEnum class to use everwhere consistently
+        # conjugation_pattern = iob_pattern + [{a.POS: 'CONJ'}]
+
         # entity_name = 'version'
+        # ver_pattern1 = [{a.LEMMA: 'version'}, {a.LIKE_NUM: True}]
+        # matcher.add_entity(entity_name, acceptor=self.make_intersect_ar(1,1))
+        # matcher.add_pattern(entity_name, ver_pattern1, label=Part.SUBJ)
+        # matcher.add_pattern(entity_name, ver_pattern1, label=Part.OBJ)
+
         # entity_name = 'location'
-        entity_name = 'date'
-        matcher.add_entity(entity_name, acceptor=self.make_inclusion_ar(1,1))
-        matcher.add_pattern(entity_name, [{a.ENT_TYPE: 'DATE'}], label=Part.OBJ)
+        # entity_name = 'date'
+        # matcher.add_entity(entity_name, acceptor=self.make_inclusion_ar(1,1))
+        # matcher.add_pattern(entity_name, [{a.ENT_TYPE: 'DATE'}], label=Part.OBJ)
 
         self.entity_rules = ['subject', 'object']
         super().__init__(matcher)
 
     def process(self, extraction):
         relations = [(extraction.relation_span, extraction.relation)]  # just full relation
-        entities = []
+        # entities = []
+        entities = defaultdict(list)
         attrs = {}
+        unique = set()
 
         matches = self.match(extraction)
         # todo: it is possible here to associate extracted things with parts of extraction using 'label' variable
         for ent_id, label, start, end in matches:
             entity_name = self.matcher.vocab[ent_id].lower_  # ent_id by spacy logic is an index in Vocab
+            end -= 1  # Matcher for some reason outputs 'end' higher (by 1) most of the times
             sp = (start, end)
-            thing = extraction.span[start:end]
-            if entity_name in self.entity_rules:
-                entities.append((sp, thing))
-            # elif entity_name in self.relation_rules:
-            #     relations.append((sp, thing))
-            else:  # it is not an entity, not a relation, so, it is an attribute
-                attrs[entity_name] = (sp, thing)
+            if sp not in unique:
+                unique.add(sp)
+                thing = extraction.span[start:end]
+                if entity_name in self.entity_rules:
+                    # entities.append((sp, thing))
+                    entities[label].append((sp, thing))
+                else:  # it is not an entity, not a relation, so, it is an attribute
+                    attrs[entity_name] = (sp, thing)
 
-        return entities, relations, attrs
+        return dict(entities), relations, attrs
+
+
+class ExtractionFilter:
+    """
+    Remove incoherent extractions
+    """
+    # todo: use language model?
+    # todo: use confidence from generic KB?
+    def process(self, entities, relations, attrs):
+        return self._entities_ok(entities) and self._relation_ok(relations)
+
+    def _entities_ok(self, entities):
+        return all(len(part_ents) == 0 for part_ents in entities.values())
+
+    def _relation_ok(self, relations):
+        return any(any(self._verb_ok(token) for token in relation) for relation in relations)
+
+    def _verb_ok(self, token):
+        return token.pos_ == 'VERB'
 
 
 # old
@@ -114,9 +129,6 @@ class NamedEntitiesFilter1:
         e = extraction
         e.subject_span = self.process_part(e.span, e.subject, e.subject_span, dist=1)
         e.object_max_span = self.process_part(e.span, e.object_max, e.object_max_span, dist=4)
-
-        # Make spans disjoint - it is not always true
-        # todo:
 
         # todo: Process prepositions like 'of', 'for', etc.
         # process only prep-s that 1) have a link to something interesting (e.g. NE or date)
@@ -151,27 +163,4 @@ class NamedEntitiesFilter1:
                 enew = e + i
 
         return bnew, enew
-
-
-class DomainFilter:
-    # todo: filter out e-s without named enitites from our domain based on existing KB (taxonomy, etc.), using hand-crafted rules, I guess.
-    def process(self, extraction):
-        # Filter out extractions without named entities in subject or object
-        res = self._is_named_ents(extraction.subject) or self._is_named_ents(extraction.object_max)
-        return res
-
-    def _is_named_ents(self, span):
-        for token in span:
-            if token.ent_iob != 0:
-                return True
-        return False
-
-
-class CoherenceFilter:
-    """
-    Remove incoherent extractions
-    """
-    # todo: use language model?
-    # todo: use confidence from generic KB?
-    pass
 
