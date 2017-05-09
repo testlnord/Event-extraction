@@ -54,5 +54,10 @@ if __name__ == "__main__":
     oie = StanfordOpenIE()  # Stanford CoreNLP server must be running
     taskman = TaskManager(nlp, db, oie)
 
+    # Extract
+    for extraction_id in taskman.extract_extractions():
+        print('Extracted extraction with id={}'.format(extraction_id))
+
+    # Check
     for i, (id, extraction) in enumerate(db.get_extractions()):
         print(i, id, extraction)
