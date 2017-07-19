@@ -25,17 +25,22 @@ dbo = Namespace('http://dbpedia.org/ontology/')
 dbr = Namespace('http://dbpedia.org/resource/')
 iri_dbo = 'http://dbpedia.org/ontology'
 iri_dbpedia = 'http://dbpedia.org'
+iri_labels = 'http://dbpedia.org/labels'
 iri_field = 'field'
 iri_more = 'field:more'
 
 # NB: for existing graphs use 'ds.get_context(iri)', for new graphs use 'ds.graph(iri)'
 # errors or silent ignoring of actions (on non-existing graphs) otherwise should be expected...
 # remove_graph also requires already existing graph
-gall = ds.get_context(iri_dbpedia)
+gdb = ds.get_context(iri_dbpedia)
+gdbo = ds.get_context(iri_dbo)
+glabels = ds.get_context(iri_labels)
+glo = ReadOnlyGraphAggregate([gdbo, glabels])
+gall = ReadOnlyGraphAggregate([gdb, gdbo])
 gf = ds.get_context(iri_field)
-# gf = ds.graph(iri_field)
 gmore = ds.get_context(iri_more)
 gfall = ReadOnlyGraphAggregate([gf, gmore])
+
 
 # Some simple tests
 # gtest = ds.get_context('gtest')
@@ -71,7 +76,7 @@ def add_triples(query):
 def get_article(subject):
     """Fail-safe, when article is not present."""
     try:
-        id_uri = next(gall.objects(subject=subject, predicate=dbo.wikiPageID))
+        id_uri = next(gdb.objects(subject=subject, predicate=dbo.wikiPageID))
     except StopIteration:
         return None
     # _id_end = id_uri.split('"')[0]
@@ -87,14 +92,13 @@ def get_article(subject):
     except FileNotFoundError:
         return None
 
-def get_label(uri):
-    q = "SELECT ?label FROM <{}> FROM <{}> WHERE".format(iri_dbpedia, iri_dbo) + ' { ' + \
-        "<{}> rdfs:label ?label . FILTER (lang(?label) = 'en')".format(uri) + ' }'
-    # store.setReturnFormat(format='turtle')
-    # return ds.query(q)
-    # todo: error when no result (index out of bounds)
-    return list(ds.query(q).bindings[0].values())[0]
+def raw(uri):
+    return uri.rsplit('/', 1)[-1]
 
+def get_label(uri):
+    t = list(glo.objects(uri, RDFS.label))
+    t = raw(uri) if len(t) == 0 else str(t[0])
+    return t.split('(')[0].strip(' _')  # remove disambiguations
 
 from fuzzywuzzy import fuzz
 from itertools import product
@@ -102,22 +106,41 @@ import editdistance
 from spacy.en import English
 from experiments.utils import load_nlp
 
-# nlp = English()
+nlp = English()
 # nlp = load_nlp()
-nlp = load_nlp(batch_size=32)
+# nlp = load_nlp(batch_size=32)
 
-def make_fuzz_metric(fuzz_ratio=85):
+def make_fuzz_metric(fuzz_ratio=80):
     def fz(t1, t2):
         return fuzz.ratio(t1, t2) >= fuzz_ratio
+    return fz
 
 def make_sim_metric(similarity_threshold):
     def sm(t1, t2):
         return t1.similarity(t2) >= similarity_threshold
+    return sm
 
-def raw(uri):
-    return uri.rsplit('/', 1)[-1]
+def make_metric(ratio=80, partial_ratio=95):
+    def m(x, y):
+        fzr = fuzz.ratio(x, y)
+        fzpr = fuzz.partial_ratio(x, y)
+        return (fzr >= ratio) or (fzpr >= partial_ratio and fzr >= ratio / 2)
+    return m
 
-def fuzzfind(doc, s, o, fuzz_ratio=85, yield_something=True):
+metric = make_fuzz_metric()
+
+def fuzzfind_plain(doc, s, r, o):
+    for k, sent in enumerate(doc.sents):
+        is_subject = is_object = is_relation = False
+        for j, token in enumerate(sent):
+            is_subject |= metric(token.text, s)
+            is_object |= metric(token.text, o)
+            # is_relation |= (token.similarity(nlp(r)) >= sim)
+            if is_subject and is_object:
+                yield sent
+                break
+
+def fuzzfind(doc, s, r, o, fuzz_ratio=85, yield_something=True):
     """Fuzzy search of multiple substrings in a spacy doc; returning a covering span of all of them."""
     s_ents = []
     o_ents = []
@@ -139,26 +162,32 @@ def fuzzfind(doc, s, o, fuzz_ratio=85, yield_something=True):
         yield doc[min(s_sent.start, o_sent.start): max(s_sent.end, o_sent.end)]
 
 def get_contexts(s, r, o):
-    # todo: use 'label' and not the resource name !!!
-    # stext = str(get_label(s))
-    # otext = str(get_label(o))
-    stext = raw(s)
-    otext = raw(o)
-    # how much context do we need to return?
+    stext = get_label(s)
+    rtext = get_label(r)
+    otext = get_label(o)
     s_article = get_article(s)
     if s_article is not None:
         sdoc = nlp(s_article['text'])
-        for context in fuzzfind(sdoc, stext, otext):
+        for context in fuzzfind_plain(sdoc, stext, rtext, otext):
             yield context, s_article
     # todo: if object is a literal, then maybe we should search by (s, r) pair and literal's type
     # is_literal = (otext[0] == otext[-1] == '"')
     o_article = get_article(o)
     if o_article is not None:
         odoc = nlp(o_article['text'])
-        for context in fuzzfind(odoc, stext, otext):
+        for context in fuzzfind_plain(odoc, stext, rtext, otext):
             yield context, o_article
 
 
+##### Test
+jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
+def test(triples):
+    for triple in jbtriples:
+        ctxs = list(get_contexts(*triple))
+        print(len(ctxs), triple, '\n')
+        for i, (ctx, art) in enumerate(ctxs):
+            print('_' * 40, i)
+            print(ctx)
 
 ### Dataset management. key (input) points: output_path and valid_props.
 
@@ -178,15 +207,19 @@ delimiter = ' '
 quotechar = '|'
 quoting = csv.QUOTE_NONNUMERIC
 def make_dataset(triples, output_path):
+    log_total = 0
     with open(output_path, 'a', newline='') as f:
         writer = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)  # todo:adjust
-        for triple in triples:
+        for i, triple in enumerate(triples):
             if validate(*triple):
-                for ctx, art in get_contexts(*triple):
+                log.info('make_dataset: processing triple #{}: {}'.format(i, [str(t) for t in triple]))
+                for j, (ctx, art) in enumerate(get_contexts(*triple)):
                     # write both the text and its' source
+                    log_total += 1
+                    log.info('make_dataset: contex #{} (total: {})'.format(j, log_total))
                     writer.writerow(list(triple) + [ctx.text.strip(), ctx.start, ctx.end] + [int(art['id'])])
 
-def read_dataset(path):
+def read_dataset(path, nlp):
     dataset = defaultdict(list)
     with open(path, 'r', newline='') as f:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
@@ -195,11 +228,11 @@ def read_dataset(path):
             # yield (URIRef(s), URIRef(r), URIRef(o)), nlp(ctext)
     return dataset
 
-# q = 'construct from <{}> from <{}>'.format(iri_field, iri_more) + '''where {}'''
-# triples = gfall.triples((None, None, None))
-# make_dataset(triples, output_path)
-triples = gfall.triples((None, dbo.product, None))
-make_dataset(triples, contexts_dir+'test1.csv')
+
+# For every valid prop make a distinct file
+for prop in valid_props:
+    triples = gfall.triples((None, prop, None))
+    make_dataset(triples, contexts_dir+'test2_{}.csv'.format(raw(prop)))
 
 classes_file = props_dir + 'prop_classes.csv'
 classes = {}
@@ -209,16 +242,6 @@ with open(classes_file, 'r', newline='') as f:
         if int(cls) >= 0:
             classes[rel] = int(cls)
 
-exit()
-
-##### Test
-jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
-for triple in jbtriples:
-    ctxs = list(get_contexts(*triple))
-    print(len(ctxs), triple, '\n')
-    for i, (ctx, art) in enumerate(ctxs):
-        print('_' * 40, i)
-        print(ctx)
 
 exit()
 
