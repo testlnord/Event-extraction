@@ -125,8 +125,12 @@ def make_metric(ratio=80, partial_ratio=95):
 metric = make_fuzz_metric()
 
 def get_chunks(doc):
+    # ab = dict([(x.start, (x.start, x.end)) for x in list(doc.ents) + list(doc.noun_chunks)])
+    # ab = list(ab.items()) + [(l, l)]
+    for e in doc.noun_chunks:
+        e.merge()
     l = len(doc)-1
-    ab = [(nc.start, nc.end) for nc in doc.noun_chunks] + [(l, l)]
+    ab = [(nc.start, nc.end) for nc in doc.ents] + [(l, l)]
     nchunks = []
     bprev = 0
     for a, b in ab:
@@ -136,6 +140,20 @@ def get_chunks(doc):
     return nchunks[:-1]  # removing (l, l) tuple
 
 def fuzzfind_plain(doc, s, r, o):
+    for e in doc.noun_chunks: e.merge()
+    for e in doc.ents: e.merge()
+    for k, sent in enumerate(doc.sents):
+        s0 = s1 = o0 = o1 = -1
+        for i, t in enumerate(sent):
+            # todo: it is possible to match 'better matching' entity
+            ii = t.idx
+            if metric(t.text, s): s0, s1 = ii, ii+len(t)
+            elif metric(t.text, o): o0, o1 = ii, ii+len(t)
+            if s0 >= 0 and o0 >= 0:
+                yield sent, s0, s1, o0, o1
+                break
+
+def fuzzfind_plain2(doc, s, r, o):
     nchunks = get_chunks(doc)  # list of disjoint spans, which include noun_chunks and tokens
     for k, sent in enumerate(doc.sents):
         s0 = s1 = o0 = o1 = -1
@@ -149,7 +167,7 @@ def fuzzfind_plain(doc, s, r, o):
                 yield sent, s0, s1, o0, o1
                 break
 
-def fuzzfind_plain2(doc, s, r, o):
+def fuzzfind_plain3(doc, s, r, o):
     nchunks = list(doc.noun_chunks)
     for k, sent in enumerate(doc.sents):
         s0 = s1 = -1
