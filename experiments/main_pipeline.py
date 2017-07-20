@@ -10,25 +10,7 @@ from experiments.marking.net import ClassifierNet
 from experiments.marking.nlp_preprocessor import NLPPreprocessor
 from experiments.marking.sentence_encoder import SentenceEncoder
 from experiments.marking.taggers import HeuristicSpanTagger, TextUserTagger, ChainTagger
-from experiments.ner_tagging.ner_net import NERNet
-from experiments.ner_tagging.ngram_encoder import LetterNGramEncoder
 from experiments.tags import CategoricalTags
-
-
-def load_nlp(model_path=None, batch_size=16):
-    nlp = English()
-    ner_net = load_default_ner_net(model_path=model_path, batch_size=batch_size)
-    nlp.pipeline.append(ner_net)
-    log.info('load_nlp: adding custom entity (iob) tagger to pipeline')
-    return nlp
-
-
-def load_default_ner_net(model_path=None, batch_size=16):
-    raw_tags = ('O', 'I', 'B')
-    tags = CategoricalTags(raw_tags)
-    encoder = LetterNGramEncoder.from_vocab_file(tags)
-    ner_net = NERNet.from_model_file(encoder=encoder, batch_size=batch_size, model_path=model_path)
-    return ner_net
 
 
 def load_default_classifier_net(model_path=None, batch_size=16):
