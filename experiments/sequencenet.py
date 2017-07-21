@@ -2,7 +2,7 @@ import logging as log
 import os
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from data_utils import Padder, BatchMaker
+from experiments.data_utils import Padder, BatchMaker
 
 
 class SequenceNet:

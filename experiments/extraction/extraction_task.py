@@ -1,3 +1,4 @@
+import logging as log
 from experiments.corenlp.openie_wrapper import StanfordOpenIE
 from experiments.db.db_gate import DBGate
 from experiments.extraction.extraction_filters import Extractor, ExtractionFilter
@@ -49,14 +50,19 @@ def test_add_samples_to_db(db):
 
 
 if __name__ == "__main__":
-    nlp = English()
+    log.basicConfig(format='%(levelname)s:%(message)s', level=log.INFO)
+
+    from experiments.dl_utils import load_nlp
+    nlp = load_nlp()  # load hooked spacy model
+    # nlp = English()  # load plain spacy model
+
     db = DBGate(nlp)
     oie = StanfordOpenIE()  # Stanford CoreNLP server must be running
     taskman = TaskManager(nlp, db, oie)
 
     # Extract
-    for extraction_id in taskman.extract_extractions():
-        print('Extracted extraction with id={}'.format(extraction_id))
+    # for extraction_id in taskman.extract_extractions():
+    #     print('Extracted extraction with id={}'.format(extraction_id))
 
     # Check
     for i, (id, extraction) in enumerate(db.get_extractions()):

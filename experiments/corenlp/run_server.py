@@ -20,5 +20,5 @@ def run_server(corenlp_path, port=9000, timeout=None, java_mx_mem='4g'):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(levelname)s:%(message)s', level=log.INFO)
-    path = '/home/hades/projects/corenlp'
+    path = '/home/user/projects/corenlp'
     run_server(path)
