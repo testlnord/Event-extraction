@@ -100,12 +100,6 @@ def get_label(uri):
     t = raw(uri) if len(t) == 0 else str(t[0])
     return t.split('(')[0].strip(' _')  # remove disambiguations
 
-from spacy.en import English
-nlp = English()
-# from experiments.utils import load_nlp
-# nlp = load_nlp()
-# nlp = load_nlp(batch_size=32)
-
 def make_fuzz_metric(fuzz_ratio=80):
     def fz(t1, t2):
         return fuzz.ratio(t1, t2) >= fuzz_ratio
@@ -140,6 +134,12 @@ def fuzzfind_plain(doc, s, r, o):
             if s0 >= 0 and o0 >= 0:
                 yield sent, s0, s1, o0, o1
                 break
+
+from spacy.en import English
+nlp = English()
+# from experiments.utils import load_nlp
+# nlp = load_nlp()
+# nlp = load_nlp(batch_size=32)
 
 def get_contexts(s, r, o):
     stext = get_label(s)

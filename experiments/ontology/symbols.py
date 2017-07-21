@@ -99,4 +99,12 @@ DEP_TAGS = [
     "xcomp",
 ]
 
-NAMES = [it[0] for it in sorted(IDS.items(), key=lambda it: it[1])]
+DEP_TAGS += [  # not documented tags
+    'acl',
+    'case',
+    'compound',
+    'dative',
+    'nummod',
+    'relcl',
+    'ROOT',
+]
