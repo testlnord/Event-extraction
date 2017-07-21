@@ -16,7 +16,6 @@ from fuzzywuzzy import fuzz
 from experiments.utils import except_safe
 
 
-log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 dbp_dir = '/home/user/datasets/dbpedia/'
 basedir = '/home/user/datasets/dbpedia/z2016_10/'
 # dir_articles = '/home/user/datasets/dbpedia/articles/'
@@ -218,34 +217,19 @@ def query_raw(q):
     return sparql.query()
 
 if __name__ == "__main__":
+    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test(jbtriples)
     # exit()
 
     # For every valid prop make a distinct file
-    # from multiprocessing import Pool
-    # triples = [gfall.triples((None, prop, None)) for prop in valid_props]
-    # filenames = [contexts_dir+'test4_{}.csv'.format(raw(prop)) for prop in valid_props]
-    # args = list(zip(triples, filenames))
-    # with Pool(processes=len(valid_props)) as pool:
-    #     nones = [pool.apply_async(make_dataset, _args) for _args in args]
-    #     ress = [none.get() for none in nones]
+    for prop in valid_props:
+        triples = gfall.triples((None, prop, None))
+        make_dataset(triples, contexts_dir+'test4_{}.csv'.format(raw(prop)))
 
-    # for prop in valid_props:
-    #     triples = gfall.triples((None, prop, None))
-    #     make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
-
-    prop = dbo.product
-    triples = gfall.triples((None, prop, None))
-    make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
-    exit()
-
-    classes_file = props_dir + 'prop_classes.csv'
-    classes = {}
-    with open(classes_file, 'r', newline='') as f:
-        reader = csv.reader(f, quotechar=csv.QUOTE_NONNUMERIC)
-        for cls, rel, _ in reader:
-            if int(cls) >= 0:
-                classes[rel] = int(cls)
+    # prop = dbo.product
+    # triples = gfall.triples((None, prop, None))
+    # make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
 
