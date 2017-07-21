@@ -1,30 +1,34 @@
 import logging as log
 from rdflib.graph import Dataset, Graph, ReadOnlyGraphAggregate
-from rdflib.namespace import RDF, RDFS, OWL, FOAF, Namespace, NamespaceManager, URIRef
+from rdflib.namespace import RDF, RDFS, OWL, FOAF, Namespace, URIRef
 from rdflib.store import Store
 from rdflib.plugins.stores.sparqlstore import SPARQLStore, SPARQLUpdateStore
-from SPARQLWrapper import DIGEST, URLENCODED, POSTDIRECTLY, POST, RDFXML, TURTLE
 from rdflib.plugins.stores.sparqlstore import SPARQLWrapper
+from SPARQLWrapper import DIGEST, URLENCODED, POSTDIRECTLY, POST, RDFXML, TURTLE
+from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
+from urllib.error import HTTPError
 
 import json
 import csv
 from collections import defaultdict
 from fuzzywuzzy import fuzz
-from itertools import product
-import editdistance
+
+from experiments.utils import except_safe
 
 
-log.basicConfig(format='%(levelname)s:%(message)s', level=log.INFO)
+log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 dbp_dir = '/home/user/datasets/dbpedia/'
 basedir = '/home/user/datasets/dbpedia/z2016_10/'
-dir_articles = '/home/user/datasets/dbpedia/articles/'
+# dir_articles = '/home/user/datasets/dbpedia/articles/'
+dir_articles = '/home/user/datasets/dbpedia/articles2/'
 
 update_endpoint = 'http://localhost:8890/sparql-auth'
-endpoint = 'http://localhost:8890/sparql'  # no update (insert, create graph, whatever...) access
+# endpoint = 'http://localhost:8890/sparql'  # no update (insert, create graph, whatever...) access
+endpoint = update_endpoint
 store = SPARQLUpdateStore(endpoint, update_endpoint, autocommit=True)  # need to call store.commit explicitly todo: there's some trouble in sparqlstore's source with that autocommit logic
 store.setHTTPAuth(DIGEST)
 store.setCredentials(user='dba', passwd='admin')
-ds = Dataset(store, default_union=False)  # todo: default_union ?
+ds = Dataset(store, default_union=False)
 
 dbo = Namespace('http://dbpedia.org/ontology/')
 dbr = Namespace('http://dbpedia.org/resource/')
@@ -54,6 +58,7 @@ gfall = ReadOnlyGraphAggregate([gf, gmore])
 # gtest.update('DELETE DATA {<s1> <r1> <o1> }')
 # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
 
+
 def add_triples(query):
     """
     Add triples from CONSTRUCT query to subgraph.
@@ -63,6 +68,9 @@ def add_triples(query):
     for res in qres:
         gf.add(res)  # adding to graph 'gf' in RDF Database (context is the graph 'gf')
 
+# It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
+# Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
+@except_safe(EndPointNotFound, HTTPError)
 def get_article(subject):
     """Fail-safe, when article is not present."""
     try:
@@ -82,17 +90,11 @@ def get_article(subject):
 def raw(uri):
     return uri.rsplit('/', 1)[-1]
 
-def get_labels(): # not ready
-    q = 'select ?uri ?label ' + \
-        'from <{}> from <{}> from named <{}> from named <{}> '.format(iri_dbo, iri_labels, iri_field, iri_more) + \
-        "where { ?uri rdfs:label ?label . filter (lang(?label) = 'en') " \
-        "{ select distinct ?uri where { " \
-        "graph <{}> {{?uri ?r" \
-        "}} "
-    res = ds.query(q)
-    # res = glo.subject_objects(RDFS.label)
+def get_labels(): # not ready!
+    res = glo.subject_objects(RDFS.label)
     return dict([(uri, str(t).split('(')[0].strip(' _')) for uri, t in res])
 
+@except_safe(EndPointNotFound, HTTPError)
 def get_label(uri):
     t = list(glo.objects(uri, RDFS.label))
     t = raw(uri) if len(t) == 0 else str(t[0])
@@ -124,21 +126,7 @@ def make_metric(ratio=80, partial_ratio=95):
 
 metric = make_fuzz_metric()
 
-def get_chunks(doc):
-    # ab = dict([(x.start, (x.start, x.end)) for x in list(doc.ents) + list(doc.noun_chunks)])
-    # ab = list(ab.items()) + [(l, l)]
-    for e in doc.noun_chunks:
-        e.merge()
-    l = len(doc)-1
-    ab = [(nc.start, nc.end) for nc in doc.ents] + [(l, l)]
-    nchunks = []
-    bprev = 0
-    for a, b in ab:
-        nchunks.extend([(i, i+1) for i in range(bprev, a)])
-        nchunks.append((a, b))
-        bprev = b
-    return nchunks[:-1]  # removing (l, l) tuple
-
+# no rdf interaction
 def fuzzfind_plain(doc, s, r, o):
     for e in doc.noun_chunks: e.merge()
     for e in doc.ents: e.merge()
@@ -152,64 +140,6 @@ def fuzzfind_plain(doc, s, r, o):
             if s0 >= 0 and o0 >= 0:
                 yield sent, s0, s1, o0, o1
                 break
-
-def fuzzfind_plain2(doc, s, r, o):
-    nchunks = get_chunks(doc)  # list of disjoint spans, which include noun_chunks and tokens
-    for k, sent in enumerate(doc.sents):
-        s0 = s1 = o0 = o1 = -1
-        sent_nc = [(a, b) for (a, b) in nchunks if a >= sent.start and b <= sent.end]
-        for a, b in sent_nc:
-            t = doc[a:b]
-            # todo: it is possible to match 'better matching' entity
-            if metric(t.text, s): s0, s1 = a, b
-            elif metric(t.text, o): o0, o1 = a, b
-            if s0 >= 0 and o0 >= 0:
-                yield sent, s0, s1, o0, o1
-                break
-
-def fuzzfind_plain3(doc, s, r, o):
-    nchunks = list(doc.noun_chunks)
-    for k, sent in enumerate(doc.sents):
-        s0 = s1 = -1
-        o0 = o1 = -2
-        # Trying noun_chunks, becaues thery're likely to contain complex named entities
-        # todo: think about partial_ratio with NC at least
-        # for t in sent.noun_chunks:  # bug in spacy!
-        sent_nc = [nc for nc in nchunks if (nc.start >= sent.start and nc.end <= sent.end)]
-        for t in sent_nc:
-            if metric(t.text, s): s0, s1 = t.start, t.end
-            elif metric(t.text, o): o0, o1 = t.start, t.end
-        if s0 >= 0 and o0 >= 0:
-            yield sent, s0, s1, o0, o1
-            continue
-        # Default (fallback) case: search named entities in tokens
-        for j, t in enumerate(sent):
-            if metric(t.text, s) and s0 != o0: s0, s1 = t.i, t.i+1
-            elif metric(t.text, o): o0, o1 = t.i, t.i+1
-            if s0 >= 0 and o0 >= 0:
-                yield sent, s0, s1, o0, o1
-                break
-
-def fuzzfind(doc, s, r, o, fuzz_ratio=85, yield_something=True):
-    """Fuzzy search of multiple substrings in a spacy doc; returning a covering span of all of them."""
-    s_ents = []
-    o_ents = []
-    for ent in doc.ents:
-        if fuzz.ratio(ent.text, s) >= fuzz_ratio:
-            s_ents.append(ent)
-        elif fuzz.ratio(ent.text, o) >= fuzz_ratio:
-            o_ents.append(ent)
-    pairs = list(sorted(product(s_ents, o_ents), key=lambda p: abs(p[0].start - p[1].start)))  # preference for nearer matches
-    for s_ent, o_ent in pairs:
-        o_sent = o_ent.sent
-        s_sent = s_ent.sent
-        if s_sent == o_sent:  # choosing matches in one sentence
-            yield_something = False
-            yield s_sent
-    if yield_something and len(pairs) > 0:
-        s_sent = pairs[0][0].sent
-        o_sent = pairs[0][1].sent
-        yield doc[min(s_sent.start, o_sent.start): max(s_sent.end, o_sent.end)]
 
 def get_contexts(s, r, o):
     stext = get_label(s)
@@ -229,18 +159,6 @@ def get_contexts(s, r, o):
             yield (*context, o_article)
 
 
-##### Test
-jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
-def test(triples):
-    for triple in triples:
-        ctxs = list(get_contexts(*triple))
-        print(len(ctxs), triple, '\n')
-        for i, ctx_data in enumerate(ctxs):
-            print('_' * 40, i)
-            print(ctx_data[0])
-test(jbtriples)
-exit()
-
 ### Dataset management. key (input) points: output_path and valid_props.
 
 # Read list of valid properties from the file
@@ -258,11 +176,12 @@ contexts_dir = '/home/user/datasets/dbpedia/contexts/'
 delimiter = ' '
 quotechar = '|'
 quoting = csv.QUOTE_NONNUMERIC
-def make_dataset(triples, output_path):
+def make_dataset(triples, output_path, mode='w'):
     log_total = 0
     header = ['s', 'r', 'o', 's_start', 's_end', 'o_start', 'o_end', 'context', 'context_start', 'context_end', 'article_id']
-    with open(output_path, 'a', newline='') as f:
+    with open(output_path, mode, newline='') as f:
         writer = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)  # todo:adjust
+        if mode == 'w': writer.writerow(header)
         for i, triple in enumerate(triples):
             if validate(*triple):
                 log.info('make_dataset: processing triple #{}: {}'.format(i, [str(t) for t in triple]))
@@ -270,45 +189,25 @@ def make_dataset(triples, output_path):
                     # write both the text and its' source
                     log_total += 1
                     log.info('make_dataset: contex #{} (total: {})'.format(j, log_total))
-                    writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start, ctx.end] + [int(art['id'])])
+                    writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start_char, ctx.end_char] + [int(art['id'])])
 
 # todo:
-def read_dataset(path, nlp):
-    dataset = defaultdict(list)
+def read_dataset(path):
     with open(path, 'r', newline='') as f:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
-        for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
-            dataset[r].append(ctext)
-            # yield (URIRef(s), URIRef(r), URIRef(o)), nlp(ctext)
-    return dataset
+        header = next(reader)
+        # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
+        for data in reader:
+            yield data
 
-
-# For every valid prop make a distinct file
-for prop in valid_props:
-    triples = gfall.triples((None, prop, None))
-    make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
-
-classes_file = props_dir + 'prop_classes.csv'
-classes = {}
-with open(classes_file, 'r', newline='') as f:
-    reader = csv.reader(f, quotechar=csv.QUOTE_NONNUMERIC)
-    for cls, rel, _ in reader:
-        if int(cls) >= 0:
-            classes[rel] = int(cls)
-
-
-exit()
-
-# Get classes for entities
-classes = [dbo.Organisation, dbo.Software, dbo.ProgrammingLanguage, dbo.Person]
-# oth_classes = [dbo.Company, dbo.VideoGame]
-
-subjects = {}
-for cls in classes:
-    q = '''select distinct ?s from <http://dbpedia.org> from named <field> where { ?s rdf:type''' \
-    + str(cls) + ''' . graph <field> {?s ?r ?o}}'''
-    subjects[cls] = list(ds.query(q))
-
+##### Test
+def test(triples):
+    for triple in triples:
+        ctxs = list(get_contexts(*triple))
+        print(len(ctxs), triple, '\n')
+        for i, ctx_data in enumerate(ctxs):
+            print('_' * 40, i)
+            print(ctx_data[0])
 
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
@@ -317,3 +216,36 @@ def query_raw(q):
     sparql.setMethod(POST)
     sparql.setQuery(q)
     return sparql.query()
+
+if __name__ == "__main__":
+    # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
+    # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
+    # test(jbtriples)
+    # exit()
+
+    # For every valid prop make a distinct file
+    # from multiprocessing import Pool
+    # triples = [gfall.triples((None, prop, None)) for prop in valid_props]
+    # filenames = [contexts_dir+'test4_{}.csv'.format(raw(prop)) for prop in valid_props]
+    # args = list(zip(triples, filenames))
+    # with Pool(processes=len(valid_props)) as pool:
+    #     nones = [pool.apply_async(make_dataset, _args) for _args in args]
+    #     ress = [none.get() for none in nones]
+
+    # for prop in valid_props:
+    #     triples = gfall.triples((None, prop, None))
+    #     make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
+
+    prop = dbo.product
+    triples = gfall.triples((None, prop, None))
+    make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
+    exit()
+
+    classes_file = props_dir + 'prop_classes.csv'
+    classes = {}
+    with open(classes_file, 'r', newline='') as f:
+        reader = csv.reader(f, quotechar=csv.QUOTE_NONNUMERIC)
+        for cls, rel, _ in reader:
+            if int(cls) >= 0:
+                classes[rel] = int(cls)
+
