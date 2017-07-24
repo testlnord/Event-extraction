@@ -94,6 +94,8 @@ class Padder:
         self.pad_value = pad_value
         self.pad_first_n = pad_first_n
         self.cut_too_long = cut_too_long
+        if pad_to_length is None:
+            self.pad = identity  # default behavior is to do nothing
 
     def __call__(self, args_generator):
         for args in args_generator:
@@ -117,3 +119,6 @@ class Padder:
     def _pad_single(self, arg, pad_mask, cut):
         return np.pad(arg[:cut], pad_width=pad_mask, mode='constant', constant_values=self.pad_value)
 
+
+def identity(*args):
+    return args
