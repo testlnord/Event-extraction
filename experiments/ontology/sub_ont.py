@@ -181,7 +181,7 @@ def make_dataset(triples, output_path, mode='w'):
     with open(output_path, mode, newline='') as f:
         writer = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)  # todo:adjust
         if mode == 'w': writer.writerow(header)
-        for i, triple in enumerate(triples):
+        for i, triple in enumerate(triples, 1):
             if validate(*triple):
                 log.info('make_dataset: processing triple #{}: {}'.format(i, [str(t) for t in triple]))
                 for j, (ctx, s0, s1, o0, o1, art) in enumerate(get_contexts(*triple), 1):
@@ -189,6 +189,34 @@ def make_dataset(triples, output_path, mode='w'):
                     log_total += 1
                     log.info('make_dataset: contex #{} (total: {})'.format(j, log_total))
                     writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start_char, ctx.end_char] + [int(art['id'])])
+
+
+class ContextRecord:
+    def __init__(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
+        self.s = self.subject = URIRef(s)
+        self.r = self.relation = URIRef(r)
+        self.o = self.object = URIRef(o)
+        self.s0 = self.s_start = s0
+        self.s1 = self.s_end = s1
+        self.o0 = self.o_start = o0
+        self.o1 = self.o_end = o1
+        self.context = ctext
+        self.c_start = cstart
+        self.c_end = cend
+        self.article_id = artid
+
+    @property
+    def s_startr(self): return self.s_start - self.c_start
+
+    @property
+    def s_endr(self): return self.s_end - self.c_start
+
+    @property
+    def o_startr(self): return self.o_start - self.c_start
+
+    @property
+    def o_endr(self): return self.o_end - self.c_start
+
 
 # todo:
 def read_dataset(path):
@@ -199,6 +227,33 @@ def read_dataset(path):
         for data in reader:
             yield data
 
+
+def is_connected(span):
+    r = span.root
+    return (r.left_edge.i == 0) and (r.right_edge.i == len(span)-1)
+    # return len(r.subtree) == len(span.subtree)  # another way
+
+
+import re
+from intervaltree import IntervalTree, Interval
+# Only chooses the sentence where the entities (subject and object) are present. Does not yield other sentences.
+
+
+# todo: update for work with ContextRecord
+def filter_context(s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid=None):
+    rex = '\n+'
+    matches = [m.span() for m in re.finditer(rex, ctext)]
+    ends, starts = list(zip(*matches))
+    starts = [0] + list(starts)
+    ends = list(ends) + [len(ctext)]
+    spans = list(zip(starts, ends))
+    itree = IntervalTree.from_tuples(spans)
+    ssent = itree[s0-cstart:s1-cstart]
+    if ssent == itree[o0-cstart:o1-cstart]:
+        p = ssent.pop()
+        return ctext[p.begin:p.end]
+
+
 ##### Test
 def test(triples):
     for triple in triples:
@@ -208,6 +263,36 @@ def test(triples):
             print('_' * 40, i)
             print(ctx_data[0])
 
+
+def test_count_data(valid_props=valid_props):
+    # Count how much data did we get
+    total = total_extracted = total_filtered = 0
+    for prop in valid_props:
+        print('\n\nPROPERTY:', prop)
+        filename = contexts_dir+'test4_{}.csv'.format(raw(prop))
+        data = list(read_dataset(filename))
+        triples = list(gfall.triples((None, prop, None)))
+        filtered = 0
+        for i, crecord in enumerate(data, 1):
+            s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid = crecord
+            if re.search('\n+', ctext.strip()):
+                print(i, s, r, o)
+                print(ctext)
+                fct = filter_context(*crecord)
+                filtered += bool(fct is None)
+                print('<{}>'.format(fct))
+        total_filtered += filtered
+        # Count
+        nb_all = len(triples)
+        nb_extracted = len(data)
+        print('{}: {}/{} ~{:.2f}'.format(prop, nb_extracted, nb_all, nb_extracted/nb_all))
+        total += nb_all
+        total_extracted += nb_extracted
+    tt = total_extracted - total_filtered
+    print('filtered/extracted: {}/{} ~{:.2f}'.format(total_filtered, total_extracted, total_filtered/total_extracted))
+    print('total: {}/{} ~{:.2f}'.format(tt, total, tt/total))
+
+
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
@@ -215,6 +300,7 @@ def query_raw(q):
     sparql.setMethod(POST)
     sparql.setQuery(q)
     return sparql.query()
+
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
@@ -224,10 +310,12 @@ if __name__ == "__main__":
     # test(jbtriples)
     # exit()
 
-    # For every valid prop make a distinct file
-    for prop in valid_props:
-        triples = gfall.triples((None, prop, None))
-        make_dataset(triples, contexts_dir+'test4_{}.csv'.format(raw(prop)))
+    # Make dataset
+    # for prop in valid_props:
+    #     triples = gfall.triples((None, prop, None))
+    #     filename = contexts_dir+'test0_{}.csv'.format(raw(prop))
+    #     make_dataset(triples, filename)
+    test_count_data()
 
     # prop = dbo.product
     # triples = gfall.triples((None, prop, None))
