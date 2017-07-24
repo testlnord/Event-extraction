@@ -230,8 +230,6 @@ class ContextRecord:
     def o_spanr(self): return (self.o_startr, self.o_endr)
 
 
-
-# todo:
 def read_dataset(path):
     with open(path, 'r', newline='') as f:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
@@ -239,36 +237,6 @@ def read_dataset(path):
         # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
         for data in reader:
             yield ContextRecord(*data)
-
-
-def is_connected(span):
-    r = span.root
-    return (r.left_edge.i == 0) and (r.right_edge.i == len(span)-1)
-    # return len(r.subtree) == len(span.subtree)  # another way
-
-
-import re
-from intervaltree import IntervalTree, Interval
-from copy import copy
-def filter_context(crecord):
-    """Only chooses the sentence where the entities (subject and object) are present. Does not yield other sentences."""
-    ctext = crecord.context
-    rex = '\n+'
-    matches = [m.span() for m in re.finditer(rex, ctext)]
-    ends, starts = list(zip(*matches))
-    starts = [0] + list(starts)
-    ends = list(ends) + [len(ctext)]
-    spans = list(zip(starts, ends))
-    itree = IntervalTree.from_tuples(spans)
-    ssent = itree[crecord.s_startr:crecord.s_endr]
-    if ssent == itree[crecord.o_startr:crecord.o_endr]:
-        p = ssent.pop()
-        cr = copy(crecord)
-        cr.context = ctext[p.begin:p.end]
-        cr.cstart = crecord.cstart + p.begin
-        cr.cend = crecord.cstart + p.end
-        return cr
-
 
 
 ##### Test
@@ -281,6 +249,8 @@ def test(triples):
             print(ctx_data[0])
 
 
+import re
+from experiments.ontology.ont_encoder import filter_context
 def test_count_data(valid_props=valid_props):
     # Count how much data did we get
     total = total_extracted = total_filtered = 0
