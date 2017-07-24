@@ -193,29 +193,42 @@ def make_dataset(triples, output_path, mode='w'):
 
 class ContextRecord:
     def __init__(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
-        self.s = self.subject = URIRef(s)
-        self.r = self.relation = URIRef(r)
-        self.o = self.object = URIRef(o)
+        # self.s = self.subject = URIRef(s)
+        # self.r = self.relation = URIRef(r)
+        # self.o = self.object = URIRef(o)
+        self.s = self.subject = s
+        self.r = self.relation = r
+        self.o = self.object = o
         self.s0 = self.s_start = s0
         self.s1 = self.s_end = s1
         self.o0 = self.o_start = o0
         self.o1 = self.o_end = o1
         self.context = ctext
-        self.c_start = cstart
-        self.c_end = cend
+        self.cstart = cstart
+        self.cend = cend
         self.article_id = artid
 
     @property
-    def s_startr(self): return self.s_start - self.c_start
+    def triple(self): return (self.subject, self.relation, self.object)
 
     @property
-    def s_endr(self): return self.s_end - self.c_start
+    def s_startr(self): return self.s_start - self.cstart  # offsets in dataset are relative to the whole document, not to the sentence
 
     @property
-    def o_startr(self): return self.o_start - self.c_start
+    def s_endr(self): return self.s_end - self.cstart
 
     @property
-    def o_endr(self): return self.o_end - self.c_start
+    def o_startr(self): return self.o_start - self.cstart
+
+    @property
+    def o_endr(self): return self.o_end - self.cstart
+
+    @property
+    def s_spanr(self): return (self.s_startr, self.s_endr)
+
+    @property
+    def o_spanr(self): return (self.o_startr, self.o_endr)
+
 
 
 # todo:
@@ -225,7 +238,7 @@ def read_dataset(path):
         header = next(reader)
         # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
         for data in reader:
-            yield data
+            yield ContextRecord(*data)
 
 
 def is_connected(span):
@@ -236,11 +249,10 @@ def is_connected(span):
 
 import re
 from intervaltree import IntervalTree, Interval
-# Only chooses the sentence where the entities (subject and object) are present. Does not yield other sentences.
-
-
-# todo: update for work with ContextRecord
-def filter_context(s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid=None):
+from copy import copy
+def filter_context(crecord):
+    """Only chooses the sentence where the entities (subject and object) are present. Does not yield other sentences."""
+    ctext = crecord.context
     rex = '\n+'
     matches = [m.span() for m in re.finditer(rex, ctext)]
     ends, starts = list(zip(*matches))
@@ -248,10 +260,15 @@ def filter_context(s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid=None):
     ends = list(ends) + [len(ctext)]
     spans = list(zip(starts, ends))
     itree = IntervalTree.from_tuples(spans)
-    ssent = itree[s0-cstart:s1-cstart]
-    if ssent == itree[o0-cstart:o1-cstart]:
+    ssent = itree[crecord.s_startr:crecord.s_endr]
+    if ssent == itree[crecord.o_startr:crecord.o_endr]:
         p = ssent.pop()
-        return ctext[p.begin:p.end]
+        cr = copy(crecord)
+        cr.context = ctext[p.begin:p.end]
+        cr.cstart = crecord.cstart + p.begin
+        cr.cend = crecord.cstart + p.end
+        return cr
+
 
 
 ##### Test
@@ -274,13 +291,13 @@ def test_count_data(valid_props=valid_props):
         triples = list(gfall.triples((None, prop, None)))
         filtered = 0
         for i, crecord in enumerate(data, 1):
-            s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid = crecord
-            if re.search('\n+', ctext.strip()):
-                print(i, s, r, o)
-                print(ctext)
-                fct = filter_context(*crecord)
+            # s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid = crecord
+            if re.search('\n+', crecord.context.strip()):
+                print(i, crecord.triple)
+                print(crecord.context)
+                fct = filter_context(crecord)
                 filtered += bool(fct is None)
-                print('<{}>'.format(fct))
+                print('<{}>'.format(fct.context if fct is not None else None))
         total_filtered += filtered
         # Count
         nb_all = len(triples)

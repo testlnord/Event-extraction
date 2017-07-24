@@ -1,5 +1,7 @@
 import logging as log
 import csv
+import re
+
 import spacy
 from intervaltree import IntervalTree, Interval
 
@@ -83,12 +85,9 @@ class DBPediaEncoder:
             return self._charmaps[article_id].search(p).pop().data
         return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
 
-    # todo: do something with the interface?
-    def encode(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
-        sent = nlp(ctext)
-        s = (s0-cstart, s1-cstart)  # offsets in dataset are relative to the whole document, not to the sentence
-        o = (o0-cstart, o1-cstart)
-        s_span, o_span = chars2spans(sent, s, o)
+    def encode(self, crecord):
+        sent = nlp(crecord.context)
+        s_span, o_span = chars2spans(sent, crecord.s_spanr, crecord.o_spanr)
         sdp = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         vectors = []
         _pos_tags = []
@@ -103,9 +102,9 @@ class DBPediaEncoder:
             # dep = sum([dep_tags.encode(dep_var) for dep_var in dep_vars])  # incorporate all dep types provided by dep parser...
             _dep_tags.append(dep)
 
-        cls = self.classes.get(r)
-        return _pos_tags, _dep_tags, vectors, cls
-        # return sdp, _pos_tags, _dep_tags, vectors, cls
+        cls = self.classes.get(crecord.r)
+        # return _pos_tags, _dep_tags, vectors, cls
+        return sdp, _pos_tags, _dep_tags, vectors  # for testing-looking
 
 
 if __name__ == "__main__":
@@ -117,7 +116,7 @@ if __name__ == "__main__":
     classes_file = props_dir + 'prop_classes.csv'
     classes = {}
     with open(classes_file, 'r', newline='') as f:
-        reader = csv.reader(f, quotechar=csv.QUOTE_NONNUMERIC)
+        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
         for cls, rel, _ in reader:
             if int(cls) >= 0:
                 classes[rel] = int(cls)
@@ -127,9 +126,9 @@ if __name__ == "__main__":
     contexts_dir = '/home/user/datasets/dbpedia/contexts/'
     filename = 'test3_{}.csv_'.format('computingPlatform')
     print('Starting...')
-    for i, data in enumerate(read_dataset(contexts_dir + filename)):
+    for i, cr in enumerate(read_dataset(contexts_dir + filename)):
         print()
-        print(i, data[:3])
-        for tok, pos, dep, vec, cls in zip(*encoder.encode(*data)):
-            print(tok.text.ljust(20), tok.pos_.ljust(10), tok.dep_.ljust(10), cls)
+        print(i, cr.triple)
+        for tok, pos, dep, vec in zip(*encoder.encode(cr)):
+            print(tok.text.ljust(20), tok.pos_.ljust(10), tok.dep_.ljust(10))
 
