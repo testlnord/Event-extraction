@@ -35,6 +35,7 @@ def filter_context(crecord):
         return cr
 
 
+# context around key spans (not just sdp), maybe subtrees?
 # todo: possible need to preserve noun_chunks (and named entities -- or remove them...)
 def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     """
@@ -70,9 +71,6 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     return list(lefts) + path + list(rights)
 
 
-# context around key spans (not just sdp), maybe subtrees?
-# make some buffer for charmap; determine aricles (docs) by article_id
-
 def chars2spans(doc, *char_offsets_pairs):
     l = len(doc)-1
     lt = len(doc.text)+1
@@ -96,17 +94,19 @@ def chars2spans(doc, *char_offsets_pairs):
     return slices
 
 
+def crecord2spans(crecord, nlp):
+    return chars2spans(nlp(crecord.context), crecord.s_spanr, crecord.o_spanr)
+
+
 class DBPediaEncoder:
-    def __init__(self, nlp, rel_classes_dict, expand_context=1, charmap_buf_size=4):
+    def __init__(self, nlp, rel_classes_dict, expand_context=1):
         self.nlp = nlp
         self.classes = rel_classes_dict
-        self.output_tags = CategoricalTags(set(self.classes.values()))
+        self.tags = CategoricalTags(set(self.classes.values()))
         self.pos_tags = CategoricalTags(POS_TAGS)
         self.dep_tags = CategoricalTags(DEP_TAGS + [''])  # some punctuation marks can have no dependency tag
         self.channels = 3  # pos_tags, dep_tags, word_vectors
         self._expand_context = expand_context
-        self._charmaps = {}
-        self._maxbuf = charmap_buf_size  # for chars2spans
 
     @property
     def vector_length(self):
@@ -114,28 +114,19 @@ class DBPediaEncoder:
 
     @property
     def nbclasses(self):
-        return len(self.output_tags)
-
-    # todo: lookup by article_id is wrong! docs are not articles, they're sentences from articles
-    def chars2spans(self, doc, article_id, *char_offsets_pairs):
-        if article_id not in self._charmaps:
-            l = len(doc)-1
-            charmap = IntervalTree(Interval(doc[i].idx, doc[i+1].idx, i) for i in range(l))
-            charmap.addi(doc[-1].idx, len(doc.text)+1, l)
-            if len(self._charmaps) >= self._maxbuf:
-                self._charmaps.popitem()
-            self._charmaps[article_id] = charmap
-        def ii(p):
-            return self._charmaps[article_id].search(p).pop().data
-        return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
+        return len(self.tags)
 
     def __call__(self, crecords):
         for crecord in crecords:
             yield self.encode(crecord)
 
-    def encode(self, crecord):
-        sent = self.nlp(crecord.context)
-        s_span, o_span = chars2spans(sent, crecord.s_spanr, crecord.o_spanr)
+    def encode_data(self, s_span, o_span):
+        """
+        Encode data having entity spans (underlying doc is used implicitly by the means of dependency tree traversal)
+        :param s_span: subject span
+        :param o_span: object span
+        :return: encoded data (tuple of arrays)
+        """
         sdp = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         vectors = []
         _pos_tags = []
@@ -149,12 +140,24 @@ class DBPediaEncoder:
             dep = self.dep_tags.encode(dep_vars[0])
             # dep = sum([dep_tags.encode(dep_var) for dep_var in dep_vars])  # incorporate all dep types provided by dep parser...
             _dep_tags.append(dep)
+        return _pos_tags, _dep_tags, vectors
+        # return np.array(_pos_tags), np.array(_dep_tags), vectors  # todo:check
 
-        raw_cls = self.classes.get(crecord.r)
-        raw_cls -= raw_cls % 2  # ignoring direction of the relation. for now.
-        cls = self.output_tags.encode(raw_cls)
-        return np.array(_pos_tags), np.array(_dep_tags), vectors, np.array(cls)
-        # return (sdp, _pos_tags, _dep_tags, vectors), raw_cls  # for testing-looking
+    def encode_class(self, r):
+        """
+        Encode relation by numeric values.
+        :param r: relation (of type: str)
+        :return: one-hot vector of categories
+        """
+        raw_cls = self.classes.get(r)
+        raw_cls -= raw_cls % 2  # ignoring direction of the relation. todo: for now.
+        cls = self.tags.encode(raw_cls)
+        return cls
+
+    def encode(self, crecord):
+        s_span, o_span = crecord2spans(crecord, self.nlp)
+        return (*self.encode_data(s_span, o_span), self.encode_class(crecord.r))
+        # return (sdp, *self.encode_data(s_span, o_span), self.encode_class(crecord.r))  # for testing-looking
 
 
 if __name__ == "__main__":
