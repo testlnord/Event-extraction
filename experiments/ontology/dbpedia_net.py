@@ -64,11 +64,37 @@ class DBPediaNet(SequenceNet):
         # res = ((arr[:-1], np.reshape(arr[-1], (self.batch_size, 1, -1))) for arr in self.batcher.batch_transposed(data_gen))
         return res
 
+    def predict(self, subject_object_spans_pairs, topn=1):
+        encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
+        preds = []
+        for batch in self.batcher.batch_transposed(encoded):
+            preds_batch = self._model.predict_on_batch(batch)
+            preds.extend(preds_batch)
+        all_tops = []
+        for pred in preds:
+            # top_inds = np.argpartition(pred, -topn)[-topn:]  # see: https://stackoverflow.com/a/23734295
+            # probs = np.sort(pred[top_inds])  # not quite right
+            top_inds = np.argsort(-pred)[:topn]
+            probs = pred[top_inds]
+            classes = [self._encoder.tags.decode(ind) for ind in top_inds]
+            tops = list(zip(top_inds, probs, classes))
+            all_tops.append(tops)
+        return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
+
+
+def eye_test(net, crecords):
+    test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
+    for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
+        print()
+        print(crecord.triple)
+        for icls, prob, rel in tops:
+            print('{:2d} {:.2f} actual: {}'.format(icls, prob, rel))
 
 
 if __name__ == "__main__":
     from experiments.ontology.sub_ont import nlp
     from experiments.ontology.data import props_dir, load_classes_dict, load_all_data
+    from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
     # np.random.seed(2)
@@ -93,13 +119,14 @@ if __name__ == "__main__":
     # net.compile1()
     model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
     net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
-
     net._model.summary(line_length=80)
 
-    # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases
-    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    eye_test(net, val_data)
 
-    evals = net.evaluate(val_data, val_steps)
-    print(evals)
+    # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases
+    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+
+    # evals = net.evaluate(val_data, val_steps)
+    # print(evals)
 
 
