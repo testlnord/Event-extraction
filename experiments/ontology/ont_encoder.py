@@ -1,14 +1,13 @@
 import logging as log
-import csv
 import re
 from copy import copy
 
+import numpy as np
 import spacy
 from intervaltree import IntervalTree, Interval
 
 from experiments.tags import CategoricalTags
 from experiments.ontology.symbols import POS_TAGS, DEP_TAGS
-from experiments.ontology.sub_ont import read_dataset
 
 
 def is_connected(span):
@@ -23,7 +22,7 @@ def filter_context(crecord):
     ctext = crecord.context
     rex = '\n+'
     matches = [m.span() for m in re.finditer(rex, ctext)]
-    ends, starts = list(zip(*matches))
+    ends, starts = zip(*matches) if len(matches) != 0 else ([], [])
     starts = [0] + list(starts)
     ends = list(ends) + [len(ctext)]
     spans = list(zip(starts, ends))
@@ -32,9 +31,7 @@ def filter_context(crecord):
     if ssent == itree[crecord.o_startr:crecord.o_endr]:
         p = ssent.pop()
         cr = copy(crecord)
-        cr.context = ctext[p.begin:p.end]
-        cr.cstart = crecord.cstart + p.begin
-        cr.cend = crecord.cstart + p.end
+        cr.cut_context(p.begin, p.end)
         return cr
 
 
@@ -78,29 +75,46 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
 
 def chars2spans(doc, *char_offsets_pairs):
     l = len(doc)-1
+    lt = len(doc.text)+1
     charmap = IntervalTree(Interval(doc[i].idx, doc[i+1].idx, i) for i in range(l))
-    charmap.addi(doc[-1].idx, len(doc.text)+1, l)
+    charmap.addi(doc[-1].idx, lt, l)
+    charmap.addi(lt, lt+1, l+1)  # as offsets_pairs are not-closed intervals, we need it for tokens at the end
     # tmp = [(t.idx, t.i) for t in doc]
     # charmap = dict([(i, ti) for k, (idx, ti) in enumerate(tmp[:-1]) for i in range(idx, tmp[k+1][0])])
-    def ii(p): return charmap[p].pop().data
-    return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
+
+    # def ii(p):
+    #     i = charmap[p].pop()
+    #     return i.data + int(p != i.begin)  # handle edge case when point falls into the previous interval
+    # return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
+    def ii(p): return charmap[p].pop().data  # help function for convenience
+    slices = []
+    for a, b in char_offsets_pairs:
+        ia = ii(a)
+        ib = ii(b)
+        ib += int(ib == ia)  # handle edge case when point falls into the previous interval which results in empty span
+        slices.append(doc[ia:ib])
+    return slices
 
 
 class DBPediaEncoder:
     def __init__(self, nlp, rel_classes_dict, expand_context=1, charmap_buf_size=4):
         self.nlp = nlp
         self.classes = rel_classes_dict
-        self.output_tags = CategoricalTags(list(self.classes.keys()))
+        self.output_tags = CategoricalTags(set(self.classes.values()))
         self.pos_tags = CategoricalTags(POS_TAGS)
-        self.dep_tags = CategoricalTags(DEP_TAGS)
+        self.dep_tags = CategoricalTags(DEP_TAGS + [''])  # some punctuation marks can have no dependency tag
         self.channels = 3  # pos_tags, dep_tags, word_vectors
         self._expand_context = expand_context
         self._charmaps = {}
         self._maxbuf = charmap_buf_size  # for chars2spans
 
     @property
+    def vector_length(self):
+        return len(self.pos_tags), len(self.dep_tags), self.nlp.vocab.vectors_length
+
+    @property
     def nbclasses(self):
-        return len(self.pos_tags), len(self.dep_tags), self.nlp.vocab.vector_length
+        return len(self.output_tags)
 
     # todo: lookup by article_id is wrong! docs are not articles, they're sentences from articles
     def chars2spans(self, doc, article_id, *char_offsets_pairs):
@@ -120,7 +134,7 @@ class DBPediaEncoder:
             yield self.encode(crecord)
 
     def encode(self, crecord):
-        sent = nlp(crecord.context)
+        sent = self.nlp(crecord.context)
         s_span, o_span = chars2spans(sent, crecord.s_spanr, crecord.o_spanr)
         sdp = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         vectors = []
@@ -136,54 +150,29 @@ class DBPediaEncoder:
             # dep = sum([dep_tags.encode(dep_var) for dep_var in dep_vars])  # incorporate all dep types provided by dep parser...
             _dep_tags.append(dep)
 
-        raw_cls = self.classes.get(crecord.r) / 2  # ignoring direction of the relation. for now.
+        raw_cls = self.classes.get(crecord.r)
+        raw_cls -= raw_cls % 2  # ignoring direction of the relation. for now.
         cls = self.output_tags.encode(raw_cls)
-        # return (_pos_tags, _dep_tags, vectors), cls
-        return (sdp, _pos_tags, _dep_tags, vectors), raw_cls  # for testing-looking
-
-
-props_dir='/home/user/datasets/dbpedia/qs/props/'
-def load_classes_dict(filename):
-    """Mapping between relations and final classes"""
-    classes = {}
-    with open(filename, 'r', newline='') as f:
-        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC, quotechar=' ')
-        for cls, rel, _ in reader:
-            if int(cls) >= 0:
-                classes[rel] = int(cls)
-    return classes
-
-
-import numpy as np
-import os
-contexts_dir = '/home/user/datasets/dbpedia/contexts/'
-def load_all_data(classes, data_dir=contexts_dir):
-    """Load ContextRecords with classes from @classes from all files in the directory @data_dir and shuffle it."""
-    dataset = []
-    for filename in os.listdir(data_dir):
-        filepath = os.path.join(data_dir, filename)
-        if os.path.isfile(filepath):
-            for crecord in read_dataset(filepath):
-                if crecord.relation in classes:
-                    filtered = filter_context(crecord)
-                    if filtered is not None:
-                        dataset.append(filtered)
-    np.random.shuffle(dataset)
-    return dataset
+        return np.array(_pos_tags), np.array(_dep_tags), vectors, np.array(cls)
+        # return (sdp, _pos_tags, _dep_tags, vectors), raw_cls  # for testing-looking
 
 
 if __name__ == "__main__":
     from experiments.ontology.sub_ont import nlp
+    from experiments.ontology.data import read_dataset, props_dir, load_classes_dict
+
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    classes = load_classes_dict()
+    prop_classes_file = props_dir + 'prop_classes.test.csv'
+    classes = load_classes_dict(prop_classes_file)
     encoder = DBPediaEncoder(nlp, classes)
 
     contexts_dir = '/home/user/datasets/dbpedia/contexts/'
     filename = 'test3_{}.csv_'.format('computingPlatform')
     print('Starting...')
     for i, cr in enumerate(read_dataset(contexts_dir + filename)):
-        data, cls = encoder.encode(cr)
+        data = encoder.encode(cr)
+        data, cls = data[:-1], data[-1]
         print()
         print(i, cls, cr.triple)
         for tok, pos, dep, vec in zip(*data):

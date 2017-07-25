@@ -67,6 +67,7 @@ def add_triples(query):
     for res in qres:
         gf.add(res)  # adding to graph 'gf' in RDF Database (context is the graph 'gf')
 
+
 # It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
 # Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
 @except_safe(EndPointNotFound, HTTPError)
@@ -86,12 +87,15 @@ def get_article(subject):
     except FileNotFoundError:
         return None
 
+
 def raw(uri):
     return uri.rsplit('/', 1)[-1]
+
 
 def get_labels(): # not ready!
     res = glo.subject_objects(RDFS.label)
     return dict([(uri, str(t).split('(')[0].strip(' _')) for uri, t in res])
+
 
 @except_safe(EndPointNotFound, HTTPError)
 def get_label(uri):
@@ -99,15 +103,18 @@ def get_label(uri):
     t = raw(uri) if len(t) == 0 else str(t[0])
     return t.split('(')[0].strip(' _')  # remove disambiguations
 
+
 def make_fuzz_metric(fuzz_ratio=80):
     def fz(t1, t2):
         return fuzz.ratio(t1, t2) >= fuzz_ratio
     return fz
 
+
 def make_sim_metric(similarity_threshold):
     def sm(t1, t2):
         return t1.similarity(t2) >= similarity_threshold
     return sm
+
 
 def make_metric(ratio=80, partial_ratio=95):
     def m(x, y):
@@ -117,7 +124,9 @@ def make_metric(ratio=80, partial_ratio=95):
                (fzpr >= partial_ratio and fzr >= 0.6)
     return m
 
+
 metric = make_fuzz_metric()
+
 
 # no rdf interaction
 def fuzzfind_plain(doc, s, r, o):
@@ -134,11 +143,14 @@ def fuzzfind_plain(doc, s, r, o):
                 yield sent, s0, s1, o0, o1
                 break
 
+
+# todo: move from globals
 from spacy.en import English
 nlp = English()
 # from experiments.utils import load_nlp
 # nlp = load_nlp()
 # nlp = load_nlp(batch_size=32)
+
 
 def get_contexts(s, r, o):
     stext = get_label(s)
@@ -158,128 +170,6 @@ def get_contexts(s, r, o):
             yield (*context, o_article)
 
 
-### Dataset management. key (input) points: output_path and valid_props.
-
-# Read list of valid properties from the file
-props_dir = '/home/user/datasets/dbpedia/qs/props/'
-props = props_dir + 'all_props_nonlit.csv'
-with open(props, 'r', newline='') as f:
-    prop_reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
-    valid_props = [URIRef(prop) for prop, n in prop_reader]
-
-def validate(s, r, o):
-    """Check if triple is one we want in the dataset."""
-    return r in valid_props
-
-contexts_dir = '/home/user/datasets/dbpedia/contexts/'
-delimiter = ' '
-quotechar = '|'
-quoting = csv.QUOTE_NONNUMERIC
-def make_dataset(triples, output_path, mode='w'):
-    log_total = 0
-    header = ['s', 'r', 'o', 's_start', 's_end', 'o_start', 'o_end', 'context', 'context_start', 'context_end', 'article_id']
-    with open(output_path, mode, newline='') as f:
-        writer = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)  # todo:adjust
-        if mode == 'w': writer.writerow(header)
-        for i, triple in enumerate(triples, 1):
-            if validate(*triple):
-                log.info('make_dataset: processing triple #{}: {}'.format(i, [str(t) for t in triple]))
-                for j, (ctx, s0, s1, o0, o1, art) in enumerate(get_contexts(*triple), 1):
-                    # write both the text and its' source
-                    log_total += 1
-                    log.info('make_dataset: contex #{} (total: {})'.format(j, log_total))
-                    writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start_char, ctx.end_char] + [int(art['id'])])
-
-
-class ContextRecord:
-    def __init__(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
-        # self.s = self.subject = URIRef(s)
-        # self.r = self.relation = URIRef(r)
-        # self.o = self.object = URIRef(o)
-        self.s = self.subject = s
-        self.r = self.relation = r
-        self.o = self.object = o
-        self.s0 = self.s_start = s0
-        self.s1 = self.s_end = s1
-        self.o0 = self.o_start = o0
-        self.o1 = self.o_end = o1
-        self.context = ctext
-        self.cstart = cstart
-        self.cend = cend
-        self.article_id = artid
-
-    @property
-    def triple(self): return (self.subject, self.relation, self.object)
-
-    @property
-    def s_startr(self): return self.s_start - self.cstart  # offsets in dataset are relative to the whole document, not to the sentence
-
-    @property
-    def s_endr(self): return self.s_end - self.cstart
-
-    @property
-    def o_startr(self): return self.o_start - self.cstart
-
-    @property
-    def o_endr(self): return self.o_end - self.cstart
-
-    @property
-    def s_spanr(self): return (self.s_startr, self.s_endr)
-
-    @property
-    def o_spanr(self): return (self.o_startr, self.o_endr)
-
-
-def read_dataset(path):
-    with open(path, 'r', newline='') as f:
-        reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
-        header = next(reader)
-        # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
-        for data in reader:
-            yield ContextRecord(*data)
-
-
-##### Test
-def test(triples):
-    for triple in triples:
-        ctxs = list(get_contexts(*triple))
-        print(len(ctxs), triple, '\n')
-        for i, ctx_data in enumerate(ctxs):
-            print('_' * 40, i)
-            print(ctx_data[0])
-
-
-import re
-from experiments.ontology.ont_encoder import filter_context
-def test_count_data(valid_props=valid_props):
-    # Count how much data did we get
-    total = total_extracted = total_filtered = 0
-    for prop in valid_props:
-        print('\n\nPROPERTY:', prop)
-        filename = contexts_dir+'test4_{}.csv'.format(raw(prop))
-        data = list(read_dataset(filename))
-        triples = list(gfall.triples((None, prop, None)))
-        filtered = 0
-        for i, crecord in enumerate(data, 1):
-            # s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid = crecord
-            if re.search('\n+', crecord.context.strip()):
-                print(i, crecord.triple)
-                print(crecord.context)
-                fct = filter_context(crecord)
-                filtered += bool(fct is None)
-                print('<{}>'.format(fct.context if fct is not None else None))
-        total_filtered += filtered
-        # Count
-        nb_all = len(triples)
-        nb_extracted = len(data)
-        print('{}: {}/{} ~{:.2f}'.format(prop, nb_extracted, nb_all, nb_extracted/nb_all))
-        total += nb_all
-        total_extracted += nb_extracted
-    tt = total_extracted - total_filtered
-    print('filtered/extracted: {}/{} ~{:.2f}'.format(total_filtered, total_extracted, total_filtered/total_extracted))
-    print('total: {}/{} ~{:.2f}'.format(tt, total, tt/total))
-
-
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
@@ -291,20 +181,4 @@ def query_raw(q):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-
-    # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
-    # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
-    # test(jbtriples)
-    # exit()
-
-    # Make dataset
-    # for prop in valid_props:
-    #     triples = gfall.triples((None, prop, None))
-    #     filename = contexts_dir+'test0_{}.csv'.format(raw(prop))
-    #     make_dataset(triples, filename)
-    test_count_data()
-
-    # prop = dbo.product
-    # triples = gfall.triples((None, prop, None))
-    # make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
 
