@@ -45,8 +45,8 @@ def unpickle(filename):
 
 
 def visualise(model, filename='model.png', exit_after=False):
-    from keras.utils.visualize_util import plot
-    plot(model, show_shapes=True, to_file=filename)
+    from keras.utils.vis_utils import plot_model
+    plot_model(model, show_shapes=True, to_file=filename)
     log.info('Saved visualisation of the model')
     if exit_after:
         exit()
@@ -79,7 +79,8 @@ class BatchMaker:
         for elems in iterable:
             cur_batch.append(tuple(map(np.array, elems)))
             if len(cur_batch) == self.batch_size:
-                yield self._transpose(cur_batch)
+                res = self._transpose(cur_batch)
+                yield res
                 cur_batch.clear()
         if len(cur_batch) != 0 and self.output_last_incomplete:
             yield self._transpose(cur_batch)
