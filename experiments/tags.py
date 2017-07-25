@@ -38,14 +38,13 @@ class CategoricalTags(Tags):
         return index
 
     def decode(self, cat):
-        i = None
+        i = cat
         if isinstance(cat, list):
             i = cat.index(1)
-        elif isinstance(cat, int):
-            i = cat
-        else:
+        try:
+            return self.raw_tags[i]
+        except TypeError:
             raise TypeError('Category has inappropriate type. Expected list or int. Got {}'.format(type(cat)))
-        return self.raw_tags[i]
 
     def is_correct(self, raw_tag):
         return raw_tag in self.raw_tags
