@@ -22,7 +22,7 @@ class SequenceNet:
         return os.path.join(os.path.dirname(__file__), *path)
 
     @classmethod
-    def from_model_file(cls, encoder, batch_size, model_path=None):
+    def from_model_file(cls, encoder, batch_size, model_path=None, timesteps=None):
         if not model_path:
             model_dir = cls.relpath('models')
             model_name = '{}_model_full_default.h5'.format(cls.__name__.lower())
@@ -30,14 +30,14 @@ class SequenceNet:
 
         model = load_model(model_path)
 
-        _, timesteps, x_len = model.layers[0].input_shape
-        if x_len != encoder.vector_length:
-            raise ValueError('encoder.vector_length is not consistent with the input of '
-                             'loaded model ({} != {})'.format(encoder.vector_length, x_len))
-        _, timesteps, nbclasses = model.layers[-1].output_shape
-        if nbclasses != encoder.nbclasses:
-            raise ValueError('encoder.nbclasses is not consistent with the output of '
-                             'loaded model ({} != {})'.format(encoder.nbclasses, nbclasses))
+        # _, timesteps, x_len = model.layers[0].input_shape  # does not work when timesteps=None (shape is 2 not 3)
+        # if x_len != encoder.vector_length:  # todo: does not work for multi-input models (multi-output encoders)
+        #     raise ValueError('encoder.vector_length is not consistent with the input of '
+        #                      'loaded model ({} != {})'.format(encoder.vector_length, x_len))
+        # _, timesteps, nbclasses = model.layers[-1].output_shape  # todo: does not work when timesteps=None (shape is 2 not 3)
+        # if nbclasses != encoder.nbclasses:
+        #     raise ValueError('encoder.nbclasses is not consistent with the output of '
+        #                      'loaded model ({} != {})'.format(encoder.nbclasses, nbclasses))
 
         net = cls(encoder, timesteps, batch_size)
         net._model = model
