@@ -96,21 +96,39 @@ def read_dataset(path):
     with open(path, 'r', newline='') as f:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
         header = next(reader)
+        log.info('read_dataset: header: {}'.format(header))
         # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
         for data in reader:
             yield ContextRecord(*data)
 
 
-props_dir='/home/user/datasets/dbpedia/qs/props/'
-def load_classes_dict(filename):
-    """Mapping between relations and final classes"""
+### Auxiliary functions ###
+
+
+props_dir='/home/user/datasets/dbpedia/qs/classes/'
+
+
+def load_superclass_mapping(filename=props_dir+'prop_classes.csv'):
+    """Mapping between relations and superclasses"""
     classes = {}
     with open(filename, 'r', newline='') as f:
         reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC, delimiter=' ')
-        for cls, rel, _, _, _ in reader:
-            if int(cls) >= 0:
-                classes[rel] = int(cls)
+        for row in reader:
+            icls, cls, rel = row[:3]
+            if int(icls) >= 0:
+                classes[rel] = cls
     return classes
+
+
+def load_inverse_mapping(filename=props_dir+'prop_inverse.csv'):
+    """Mapping between superclasses and their inverse superclasses"""
+    inverse = {}
+    with open(filename, 'r', newline='') as f:
+        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC, delimiter=' ')
+        for icls, cls, iinv, inv in reader:
+            inverse[cls] = inv
+            inverse[inv] = cls
+    return inverse
 
 
 def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
@@ -128,7 +146,9 @@ def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
     return dataset
 
 
-##### Tests
+### Tests ###
+
+
 def test(triples):
     for triple in triples:
         ctxs = list(get_contexts(*triple))
