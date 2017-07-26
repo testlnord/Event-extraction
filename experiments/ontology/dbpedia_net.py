@@ -14,23 +14,53 @@ class DBPediaNet(SequenceNet):
     def compile1(self):
         xlens = self._encoder.vector_length
 
-        dr = 0.4
-        rdr = 0.4
+        dr = 0.5
+        rdr = 0.5
 
         inputs = [Input(shape=(None, xlen)) for xlen in xlens]
         lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
         lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
         lstms3 = [LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
-        last = Concatenate(axis=-1)(lstms3)
-        dense = Dense(self.nbclasses, activation='softmax')(last)
 
-        output = dense
+        # todo: add dropout to dense?
+        last = Concatenate(axis=-1)(lstms3)
+        output = Dense(self.nbclasses, activation='softmax')(last)
+
         self._model = Model(inputs=inputs, outputs=[output])
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
         self._model.compile(loss='categorical_crossentropy', optimizer='adam')
 
-
     def compile2(self):
+        input_lens = self._encoder.vector_length
+        min_units = 32
+        aux_dense_units = 256
+
+        dr = 0.5
+        rdr = 0.5
+
+        inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
+        xlens = [max(min_units, xlen) for xlen in input_lens]  # more units for simpler channels
+        # todo: add inputs from previous final_dense to next layer's lstm?
+        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
+        lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
+        lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
+
+        all_lstms = [lstms1, lstms2, lstms3]
+        # aux_lstms2 = [LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
+        all_aux_lstms = [[LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm, xlen in zip(lstms, xlens)] for lstms in all_lstms]
+
+        # todo: add dropout to dense?
+        auxs = [Concatenate()(aux_lstms) for aux_lstms in all_aux_lstms]
+        denses = [Dense(aux_dense_units, activation='sigmoid')(aux) for aux in auxs]
+
+        last = Concatenate()(denses)
+        output = Dense(self.nbclasses, activation='softmax')(last)
+
+        self._model = Model(inputs=inputs, outputs=[output])
+        # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
+        self._model.compile(loss='categorical_crossentropy', optimizer='adam')
+
+    def compile3(self):
         xlens = self._encoder.nbclasses
 
         last_units = 256
@@ -104,7 +134,7 @@ if __name__ == "__main__":
 
     batch_size = 1
     prop_case = 'test.balanced0.'
-    model_name = prop_case + 'dr.noaug.v1.'
+    model_name = prop_case + 'nc.dr.noaug.v2'
 
     scls_file = props_dir + 'prop_classes.{}csv'.format(prop_case)
     sclasses = load_superclass_mapping(scls_file)
@@ -113,17 +143,18 @@ if __name__ == "__main__":
     encoder = DBPediaEncoder(nlp, sclasses, inverse)
     dataset = load_all_data(sclasses, shuffle=True)
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
-    print('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
+    log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
 
     epochs = 6
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
-    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False)
+    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=True, expand_noun_chunks=True)
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile1()
+    net.compile2()
     # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    log.info('model: {}; epochs: {}'.format(model_name, epochs))
     net._model.summary(line_length=80)
 
     # eye_test(net, val_data)
