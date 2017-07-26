@@ -50,7 +50,7 @@ class TextUserTagger:
         prompt = output_sep + str_text + '\n' + 'enter tag: '
 
         user_input = None
-        while not self.tags.is_correct(user_input):
+        while not self.tags.__contains__(user_input):
             user_input = input(prompt)
             if user_input == self.end:
                 break
