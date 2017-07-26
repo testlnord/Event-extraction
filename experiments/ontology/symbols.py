@@ -44,6 +44,8 @@ NER_TAGS = [
     "CARDINAL",
 ]
 
+IOB_TAGS = ['I', 'O', 'B']
+
 DEP_TAGS = [
     "acomp",
     "advcl",
