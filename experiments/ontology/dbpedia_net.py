@@ -56,9 +56,8 @@ class DBPediaNet(SequenceNet):
         self._model = Model(inputs=inputs, outputs=[output])
         self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
 
-    # todo:
     def _make_data_gen(self, data_gen):
-        # data_gen = self.padder(self._encoder.encode(data) for data in data_gen)
+        # data_gen = self.padder(xy for data in data_gen for xy in self._encoder.encode(data))
         data_gen = self._encoder(data_gen)
         res = ((arr[:-1], arr[-1]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and output (classes)
         # res = ((arr[:-1], np.reshape(arr[-1], (self.batch_size, 1, -1))) for arr in self.batcher.batch_transposed(data_gen))
@@ -71,12 +70,13 @@ class DBPediaNet(SequenceNet):
             preds_batch = self._model.predict_on_batch(batch)
             preds.extend(preds_batch)
         all_tops = []
+        decode = self._encoder.tags.decode
         for pred in preds:
             # top_inds = np.argpartition(pred, -topn)[-topn:]  # see: https://stackoverflow.com/a/23734295
             # probs = np.sort(pred[top_inds])  # not quite right
             top_inds = np.argsort(-pred)[:topn]
             probs = pred[top_inds]
-            classes = [self._encoder.tags.decode(ind) for ind in top_inds]
+            classes = [decode(ind) for ind in top_inds]
             tops = list(zip(top_inds, probs, classes))
             all_tops.append(tops)
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
@@ -88,25 +88,27 @@ def eye_test(net, crecords):
         print()
         print(crecord.triple)
         for icls, prob, rel in tops:
-            print('{:2d} {:.2f} actual: {}'.format(icls, prob, rel))
+            print('{:2d} {:.2f} {}'.format(icls, prob, rel))
 
 
 if __name__ == "__main__":
     from experiments.ontology.sub_ont import nlp
-    from experiments.ontology.data import props_dir, load_classes_dict, load_all_data
+    from experiments.ontology.data import props_dir, load_superclass_mapping, load_inverse_mapping, load_all_data
     from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
     # np.random.seed(2)
 
     batch_size = 1
-    model_name = 'test_v1'
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
-    prop_classes_file = props_dir + 'prop_classes.test.csv'
-    classes = load_classes_dict(prop_classes_file)
-    dataset = load_all_data(classes, shuffle=True)
+    # scls_file = props_dir + 'prop_classes.csv'
+    # inv_file = props_dir + 'prop_inverse.csv'
+    sclasses = load_superclass_mapping()
+    inverse = load_inverse_mapping()
+    encoder = DBPediaEncoder(nlp, sclasses, inverse)
+    dataset = load_all_data(sclasses, shuffle=True)
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
     print('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
 
@@ -114,9 +116,10 @@ if __name__ == "__main__":
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
-    encoder = DBPediaEncoder(nlp, classes)
+    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False)
     # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     # net.compile1()
+    model_name = 'test_v2_noaug'
     model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
     net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
     net._model.summary(line_length=80)
@@ -125,8 +128,7 @@ if __name__ == "__main__":
 
     # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases
     # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-
-    # evals = net.evaluate(val_data, val_steps)
+    # evals = net.evaluate(cycle(val_data), val_steps)
     # print(evals)
 
 
