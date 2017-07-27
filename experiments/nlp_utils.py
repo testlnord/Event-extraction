@@ -106,7 +106,8 @@ def get_hypernym(nlp, token):
         if len(synsets) > 0:
             hs = synsets[0].hypernyms()
             h = hs[0] if len(hs) > 0 else synsets[0]
-            raw = h.lemma_names()[0]
-            return nlp.vocab[raw]
+            # h.lexname is also interesting
+            raw = h.lemma_names()[0].replace('_', ' ')  # wordnet representation uses '_' instead of space
+            return nlp(raw)  # wordnet lemmas can consist out of several words, so, nlp.vocab[raw] is not suitable
 
 
