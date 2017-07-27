@@ -109,4 +109,5 @@ DEP_TAGS += [  # not documented tags
     'nummod',
     'relcl',
     'ROOT',
+    'predet'
 ]

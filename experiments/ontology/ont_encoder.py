@@ -42,17 +42,22 @@ class DBPediaEncoder:
         self.classes = superclass_map
         self.inverse_map = inverse_map
         self.tags = CategoricalTags(set(self.classes.values()))
+        self.iob_tags = CategoricalTags(IOB_TAGS)
         self.pos_tags = CategoricalTags(POS_TAGS)
         self.dep_tags = CategoricalTags(DEP_TAGS + [''])  # some punctuation marks can have no dependency tag
-        self.iob_tags = CategoricalTags(IOB_TAGS)
-        self.channels = 4  # pos_tags, dep_tags, word_vectors
+        # self.channels = 4 + int(add_wordnet)  # iob_tags, pos_tags, dep_tags, word_vectors, wordnet hypernyms vectors
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
         self.augment_data = augment_data
 
     @property
     def vector_length(self):
-        return len(self.iob_tags), len(self.pos_tags), len(self.dep_tags), self.nlp.vocab.vectors_length
+        wv = self.wordvec_length
+        return len(self.iob_tags), len(self.pos_tags), len(self.dep_tags), wv
+
+    @property
+    def wordvec_length(self):
+        return self.nlp.vocab.vectors_length
 
     @property
     def nbclasses(self):
@@ -73,21 +78,30 @@ class DBPediaEncoder:
         sdp = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         sdp = expand_ents(sdp, self.expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
-        _vectors = []
+        _iob_tags = []
         _pos_tags = []
         _dep_tags = []
-        _iob_tags = []
+        _vectors = []
+        _wn_hypernyms = []
         for t in sdp:
             log.debug('token: {}; dep_: {}; pos_: {};'.format(t.text, t.dep_, t.pos_))
-            _vectors.append(t.vector)
-            _pos_tags.append(self.pos_tags.encode(t.pos_))
             _iob_tags.append(self.iob_tags.encode(t.ent_iob_))
-            # _dep_tags.append(dep_tags.encode(t.dep_))
-            dep_vars = t.dep_.split('||')  # something very strange!!! need to get the data that makes dep parser do strange things
-            dep = self.dep_tags.encode(dep_vars[0])
-            # dep = np.sum([np.array(dep_tags.encode(dep_var)) for dep_var in dep_vars])  # incorporate all dep types provided by dep parser...
+            _pos_tags.append(self.pos_tags.encode(t.pos_))
+            _vectors.append(t.vector)
+            # Dependency tags by spacy
+            dep_vars = t.dep_.split('||')
+            if len(dep_vars) > 1:
+                log.info('DBPediaEncoder: dep_tags: strange dep: token:"{}" dep:"{}"'.format(t.text, t.dep_))
+            # dep = self.dep_tags.encode(dep_vars[0])
+            # Use all dep types provided by dep parser...
+            dep = sum(np.array(self.dep_tags.encode(dep_var)) for dep_var in dep_vars)
             _dep_tags.append(dep)
-        return np.array(_iob_tags), np.array(_pos_tags), np.array(_dep_tags), _vectors
+            # WordNet hypernyms' word vectors
+            hyp = get_hypernym(self.nlp, t)
+            _wn_hypernyms.append(np.zeros(self.wordvec_length) if hyp is None else hyp.vector)
+        # data = _iob_tags, _pos_tags, _dep_tags, _vectors, _wn_hypernyms
+        data = _iob_tags, _pos_tags, _dep_tags, _vectors
+        return tuple(map(np.array, data))
 
     def encode_class(self, r):
         """
@@ -113,6 +127,29 @@ class DBPediaEncoder:
                 yield (*rdata, rcls)
 
 
+from collections import defaultdict
+def sort_simmetric(dataset):
+    direction_sorted = defaultdict(lambda : defaultdict(list))
+    for cr in dataset:
+        direction = (cr.s_end <= cr.o_start)
+        direction_sorted[cr.relation][direction].append(cr)
+    return direction_sorted
+
+
+def find_simmetric(dataset):
+    for rel, d in sort_simmetric(dataset).items():
+        print()
+        lt = len(d[True])
+        lf = len(d[False])
+        print('rev: {}; norm: {};'.format(lf, lt), rel)
+        if lt != 0 and lf != 0:
+            for direction_same in d.keys():
+                for cr in d[direction_same]:
+                    print(int(direction_same), cr.triple)
+                    print(' ', cr.context)
+
+
+
 if __name__ == "__main__":
     from experiments.ontology.sub_ont import nlp
     from experiments.ontology.data import props_dir, load_superclass_mapping, load_inverse_mapping, load_all_data
@@ -126,8 +163,9 @@ if __name__ == "__main__":
     dataset = load_all_data(sclasses, shuffle=False)
     encoder = DBPediaEncoder(nlp, sclasses, inverse)
 
-    contexts_dir = '/home/user/datasets/dbpedia/contexts/'
-    filename = 'test4_{}.csv'.format('influenced')
+    find_simmetric(dataset)
+    exit()
+
     for i, cr in enumerate(dataset):
         for data in encoder.encode(cr):
             data, cls = data[:-1], data[-1]
