@@ -91,6 +91,29 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     return list(lefts) + path + list(rights)
 
 
+
+from nltk.corpus import wordnet as wn
+
+
+wordnet_pos_allowed = {
+    "NOUN": wn.NOUN,
+    "ADJ": wn.ADJ,
+    "ADV": wn.ADV,
+    "VERB": wn.VERB,
+}
+
+
+def get_hypernym(nlp, token):
+    pos = wordnet_pos_allowed.get(token.pos_)
+    if pos is not None:
+        synsets = wn.synsets(token.text, pos)
+        if len(synsets) > 0:
+            hs = synsets[0].hypernyms()
+            h = hs[0] if len(hs) > 0 else synsets[0]
+            raw = h.lemma_names()[0]
+            return nlp.vocab[raw]
+
+
 def chars2spans(doc, *char_offsets_pairs):
     l = len(doc)-1
     lt = len(doc.text)+1
@@ -195,11 +218,7 @@ class DBPediaEncoder:
                 rcls = self.encode_class(rr)
                 # todo: change data somewhow to reflect the change in directionality of the relation
                 rdata = map(np.flipud, data)  # reverse all arrays
-                # rdata = data
                 yield (*rdata, rcls)
-
-        # return (*self.encode_data(s_span, o_span), self.encode_class(crecord.r))
-        # return (sdp, *self.encode_data(s_span, o_span), self.encode_class(crecord.r))  # for testing-looking
 
 
 if __name__ == "__main__":
