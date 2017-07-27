@@ -32,7 +32,7 @@ class DBPediaNet(SequenceNet):
 
     def compile2(self):
         input_lens = self._encoder.vector_length
-        min_units = 32
+        min_units = 16
         aux_dense_units = 256
 
         dr = 0.5
@@ -54,11 +54,20 @@ class DBPediaNet(SequenceNet):
         denses = [Dense(aux_dense_units, activation='sigmoid')(aux) for aux in auxs]
 
         last = Concatenate()(denses)
-        output = Dense(self.nbclasses, activation='softmax')(last)
+        output = Dense(self.nbclasses, activation='softmax', name='output')(last)
 
-        self._model = Model(inputs=inputs, outputs=[output])
+
+        # Multiple outputs
+        direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
+        self._model = Model(inputs=inputs, outputs=[output, direction_output])
+        self._model.compile(optimizer='adam',
+                            loss={'output':'categorical_crossentropy', 'direction_output':'binary_crossentropy'},
+                            loss_weights={'output':1, 'direction_output':0.5})
+
+        # Single output
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
-        self._model.compile(loss='categorical_crossentropy', optimizer='adam')
+        # self._model = Model(inputs=inputs, outputs=[output])
+        # self._model.compile(loss='categorical_crossentropy', optimizer='adam')
 
     def compile3(self):
         xlens = self._encoder.nbclasses
@@ -90,8 +99,9 @@ class DBPediaNet(SequenceNet):
     def _make_data_gen(self, data_gen):
         # data_gen = self.padder(xy for data in data_gen for xy in self._encoder.encode(data))
         data_gen = self._encoder(data_gen)
-        res = ((arr[:-1], arr[-1]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and output (classes)
-        # res = ((arr[:-1], np.reshape(arr[-1], (self.batch_size, 1, -1))) for arr in self.batcher.batch_transposed(data_gen))
+        c = self._encoder.channels
+        # todo: if len(arr[c:]) == 1 then use arr[c] ??? is it necessary
+        res = ((arr[:c], arr[c:]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and outputs (classes)
         return res
 
     def predict(self, subject_object_spans_pairs, topn=1):
@@ -102,7 +112,7 @@ class DBPediaNet(SequenceNet):
             preds.extend(preds_batch)
         all_tops = []
         decode = self._encoder.tags.decode
-        for pred in preds:
+        for pred, direction in preds:  # todo: check for multiple outputs
             # top_inds = np.argpartition(pred, -topn)[-topn:]  # see: https://stackoverflow.com/a/23734295
             # probs = np.sort(pred[top_inds])  # not quite right
             top_inds = np.argsort(-pred)[:topn]
@@ -123,6 +133,8 @@ def eye_test(net, crecords):
 
 
 if __name__ == "__main__":
+    np.random.seed(2)
+
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
     from experiments.ontology.sub_ont import nlp
@@ -130,11 +142,10 @@ if __name__ == "__main__":
     from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-    # np.random.seed(2)
 
     batch_size = 1
     prop_case = 'test.balanced0.'
-    model_name = prop_case + 'nc.dr.noaug.v2'
+    model_name = prop_case + 'dr.noaug.v2.2.'
 
     scls_file = props_dir + 'prop_classes.{}csv'.format(prop_case)
     sclasses = load_superclass_mapping(scls_file)
@@ -145,11 +156,11 @@ if __name__ == "__main__":
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
     log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
 
-    epochs = 6
+    epochs = 4
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
-    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=True, expand_noun_chunks=True)
+    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
     # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
@@ -160,6 +171,7 @@ if __name__ == "__main__":
     # eye_test(net, val_data)
 
     net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    log.info('end training')
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print(evals)
     # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases

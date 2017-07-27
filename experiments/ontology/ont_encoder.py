@@ -45,7 +45,7 @@ class DBPediaEncoder:
         self.iob_tags = CategoricalTags(IOB_TAGS)
         self.pos_tags = CategoricalTags(POS_TAGS)
         self.dep_tags = CategoricalTags(DEP_TAGS + [''])  # some punctuation marks can have no dependency tag
-        # self.channels = 4 + int(add_wordnet)  # iob_tags, pos_tags, dep_tags, word_vectors, wordnet hypernyms vectors
+        self.channels = 4  # iob_tags, pos_tags, dep_tags, word_vectors
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
         self.augment_data = augment_data
@@ -97,34 +97,36 @@ class DBPediaEncoder:
             dep = sum(np.array(self.dep_tags.encode(dep_var)) for dep_var in dep_vars)
             _dep_tags.append(dep)
             # WordNet hypernyms' word vectors
-            hyp = get_hypernym(self.nlp, t)
-            _wn_hypernyms.append(np.zeros(self.wordvec_length) if hyp is None else hyp.vector)
+            # hyp = get_hypernym(self.nlp, t)
+            # _wn_hypernyms.append(np.zeros(self.wordvec_length) if hyp is None else hyp.vector)
         # data = _iob_tags, _pos_tags, _dep_tags, _vectors, _wn_hypernyms
         data = _iob_tags, _pos_tags, _dep_tags, _vectors
         return tuple(map(np.array, data))
 
-    def encode_class(self, r):
+    def encode_class(self, crecord):
         """
         Encode relation by numeric values.
         :param r: relation (of type: str)
-        :return: one-hot vector of categories
+        :return: tuple of (one-hot vector of categories, direction of the s->o relation)
         """
-        raw_cls = self.classes.get(r)
+        raw_cls = self.classes.get(crecord.r)
         cls = self.tags.encode(raw_cls)
-        return np.array(cls)
+        direction = (crecord.s_end <= crecord.o_start)  # is direction of relation the same as order of (s, o) in the context
+        return np.array(cls), int(direction)
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
         data = self.encode_data(s_span, o_span)
-        cls = self.encode_class(crecord.r)
-        yield (*data, cls)
+        cls = self.encode_class(crecord)
+        yield (*data, *cls)
         if self.augment_data:
             rr = self.inverse_map.get(crecord.r)
+            crecord.r = rr
             if rr is not None:
-                rcls = self.encode_class(rr)
+                rcls = self.encode_class(crecord)
                 # todo: change data somewhow to reflect the change in directionality of the relation
                 rdata = map(np.flipud, data)  # reverse all arrays
-                yield (*rdata, rcls)
+                yield (*rdata, *rcls)
 
 
 from collections import defaultdict
@@ -162,13 +164,14 @@ if __name__ == "__main__":
     inverse = load_inverse_mapping()
     dataset = load_all_data(sclasses, shuffle=False)
     encoder = DBPediaEncoder(nlp, sclasses, inverse)
+    c = encoder.channels
 
     find_simmetric(dataset)
     exit()
 
     for i, cr in enumerate(dataset):
         for data in encoder.encode(cr):
-            data, cls = data[:-1], data[-1]
+            data, clss = data[:c], data[c:]
             print()
             print(i, cr.triple)
 
