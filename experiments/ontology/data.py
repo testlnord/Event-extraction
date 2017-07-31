@@ -2,11 +2,12 @@ import logging as log
 import os
 import csv
 import re
+import pickle
 
 import numpy as np
 from rdflib import URIRef
-from experiments.ontology.sub_ont import get_contexts
-from experiments.ontology.sub_ont import raw, gfall
+from experiments.ontology.sub_ont import get_contexts, get_article
+from experiments.ontology.sub_ont import raw, gfall, gf
 from experiments.ontology.ont_encoder import filter_context
 
 
@@ -44,7 +45,7 @@ def make_dataset(triples, output_path, mode='w'):
                     writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start_char, ctx.end_char] + [int(art['id'])])
 
 
-class ContextRecord:
+class RelationRecord:
     def __init__(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
         # self.s = self.subject = URIRef(s)
         # self.r = self.relation = URIRef(r)
@@ -92,6 +93,62 @@ class ContextRecord:
     def o_spanr(self): return (self.o_startr, self.o_endr)
 
 
+class EntityRecord:
+    def __init__(self, crecord, start, end, uri):
+        """
+
+        :param uri: original uri
+        :param start: char offset of the start in crecord.context (including start)
+        :param end: char offset of the end in crecord.context (not including end)
+        :param crecord: source of entity: ContextRecord
+        """
+        self.crecord = crecord
+        self.start = start
+        self.end = end
+        self.uri = uri
+
+    @property
+    def text(self):
+        return self.crecord.context[slice(*self.span)]
+
+    @property
+    def span(self):
+        return self.start, self.end
+
+    @property
+    def spang(self):
+        s = self.crecord.start
+        return s+self.start, s+self.end
+
+    def cut_context(self, begin, end):
+        self.start = max(0, self.start - begin)
+        self.end = min(self.end, end)
+
+
+class ContextRecord:
+    @classmethod
+    def from_span(cls, span, artid, ents=None):
+        return cls(span.text, span.start_char, span.end_char, artid, ents)
+
+    def __init__(self, ctext, cstart, cend, artid, ents=None):
+        self.context = ctext
+        self.start = cstart
+        self.end = cend
+        self.article_id = artid
+        self.ents = [] if ents is None else ents
+
+    def cut_context(self, begin, end):
+        self.context = self.context[begin:end]
+        self.start = self.start + begin
+        self.end = self.start + end
+        for e in self.ents:
+            e.cut_context(begin, end)
+
+    @property
+    def span(self):
+        return self.start, self.end
+
+
 def read_dataset(path):
     with open(path, 'r', newline='') as f:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
@@ -99,7 +156,7 @@ def read_dataset(path):
         log.info('read_dataset: header: {}'.format(header))
         # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
         for data in reader:
-            yield ContextRecord(*data)
+            yield RelationRecord(*data)
 
 
 ### Auxiliary functions ###
@@ -145,6 +202,70 @@ def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
     if shuffle: np.random.shuffle(dataset)
     return dataset
 
+
+
+
+
+
+
+from collections import defaultdict
+from fuzzywuzzy import fuzz
+from experiments.ontology.sub_ont import nlp, get_label
+
+
+
+# Complexity: O(O(metric)*len(doc)*len(candidates))
+def fuzzfind_plain1(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
+    # Merge noun_chunks and entities to iterate over them along with the simple tokens
+    for e in doc.noun_chunks: e.merge()
+    for e in doc.ents: e.merge()
+    for k, sent in enumerate(doc.sents):
+        found = defaultdict(list)
+        for i, t in enumerate(sent):
+            # Choosing 'better matching' entity
+            cent, measured = max([(c, metric(t, c)) for c in candidates], key=lambda tpl: tpl[1])
+            if measured >= metric_threshold:
+                ii = t.idx
+                found[cent].append((ii, ii+len(t)))
+        yield sent, found
+
+
+def get_contexts0(articles, *ents_uris):
+    """
+    Search for occurences of ents in the articles about ents.
+    :param articles: mapping type, containing fields 'text' and 'id'
+    :param ents_uris: uris of the ents
+    :yield: ContextRecord
+    """
+    raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}
+    for i, article in enumerate(articles, 1):
+        log.info('get_contexts: article #{} with title:"{}"'.format(i, article['title']))
+        doc = nlp(article['text'])
+        for sent, ents_dict in fuzzfind_plain1(doc, *raw_ents.keys()):
+            crecord = ContextRecord.from_span(sent, artid=article['id'])
+            crecord.ents = [EntityRecord(crecord, a, b, uri=raw_ents[raw_ent]) for raw_ent, (a, b) in ents_dict.items()]
+            yield crecord
+
+
+
+def make_ner_dataset(output_file, visited=set()):
+    with open(output_file, 'wb') as f:
+        for subject in gf.subjects():
+            objects = set(gf.objects(subject=subject))
+            # todo: What articles to add to art_ids
+            articles = filter(None, map(get_article, objects))
+            articles = list(filter(lambda a: a['id'] not in visited, articles))
+
+            subj_article = get_article(subject)
+            objects.add(subject)
+            articles.append(subj_article)
+            for crecord in get_contexts0(articles, *objects):
+                # todo: save
+                pickle.dump(crecord, f)
+
+            if subj_article is not None:
+                # for crecord in get_contexts0([subj_article], objects):
+                visited.add(subj_article['id'])
 
 ### Tests ###
 
@@ -195,7 +316,18 @@ if __name__ == "__main__":
     # test(jbtriples)
     # exit()
 
-    test_count_data()
+    # test_count_data()
+
+
+    # Make NER dataset
+    visited = set()
+    output_file = '/home/user/datasets/dbpedia/ner/' + 'crecords.pck'
+    make_ner_dataset(output_file, visited)
+    # try:
+    #     pass
+    # except Exception as e:
+    #     print(e)
+    #     print(visited)  # dump if something bad happens
 
     # Make dataset
     # for prop in valid_props:
