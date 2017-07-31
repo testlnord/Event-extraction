@@ -90,17 +90,18 @@ def get_superclass(uri):
     :param uri: uri of the class to find superclass of
     :return: uri of superclass, @uri if class has no superclass, else None (e.g. @uri is not a uri of the class)
     """
-    direct_scls = gdbo.objects(uri, RDFS.subClassOf)
+    direct_scls = list(gdbo.objects(uri, RDFS.subClassOf))
     if len(direct_scls) > 0:
         c = direct_scls[0]
         return uri if c == OWL.Thing else c
     return None
 
+
 ### Classes ###
 
 
 from experiments.ontology.symbols import ENT_CLASSES
-final_classes = {URIRef(dbo[s]): ent_type for s, ent_type in ENT_CLASSES.items()}
+final_classes = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_CLASSES.items()}
 
 
 def get_final_class(cls):
@@ -112,8 +113,6 @@ def get_final_class(cls):
     return c
 
 
-# todo: need all possible @classes to map
-# todo: save final mapping?
 def get_superclasses_map(classes):
     superclasses = dict()
     for cls in classes:
@@ -134,6 +133,8 @@ def query_raw(q):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+
+    # print(final_classes)
 
     # Some simple tests
     gtest = ds.get_context('gtest')
