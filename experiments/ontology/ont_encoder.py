@@ -154,13 +154,13 @@ def find_simmetric(dataset):
 
 if __name__ == "__main__":
     from experiments.ontology.sub_ont import nlp
-    from experiments.ontology.data import props_dir, load_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import props_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     # scls_file = props_dir + 'prop_classes.csv'
     # inv_file = props_dir + 'prop_inverse.csv'
-    sclasses = load_superclass_mapping()
+    sclasses = load_prop_superclass_mapping()
     inverse = load_inverse_mapping()
     dataset = load_all_data(sclasses, shuffle=False)
     encoder = DBPediaEncoder(nlp, sclasses, inverse)

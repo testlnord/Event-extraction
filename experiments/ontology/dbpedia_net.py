@@ -61,8 +61,8 @@ class DBPediaNet(SequenceNet):
         direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
         self._model = Model(inputs=inputs, outputs=[output, direction_output])
         self._model.compile(optimizer='adam',
-                            loss={'output':'categorical_crossentropy', 'direction_output':'binary_crossentropy'},
-                            loss_weights={'output':1, 'direction_output':0.5})
+                            loss={'output': 'categorical_crossentropy', 'direction_output': 'binary_crossentropy'},
+                            loss_weights={'output': 1, 'direction_output': 1})
 
         # Single output
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
@@ -104,21 +104,25 @@ class DBPediaNet(SequenceNet):
         res = ((arr[:c], arr[c:]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and outputs (classes)
         return res
 
+    # this method is specific for output of form [categorical, binary]
     def predict(self, subject_object_spans_pairs, topn=1):
         encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
         preds = []
+        directions = []
         for batch in self.batcher.batch_transposed(encoded):
-            preds_batch = self._model.predict_on_batch(batch)
+            preds_batch, directions_batch = self._model.predict_on_batch(batch)
             preds.extend(preds_batch)
+            directions.extend(directions_batch)
         all_tops = []
         decode = self._encoder.tags.decode
-        for pred, direction in preds:  # todo: check for multiple outputs
-            # top_inds = np.argpartition(pred, -topn)[-topn:]  # see: https://stackoverflow.com/a/23734295
-            # probs = np.sort(pred[top_inds])  # not quite right
+        threshold = 0.5
+        for pred, direction in zip(preds, directions):  # todo: check for multiple outputs
+            direction = int(direction[0] >= threshold)
+            dirs = [direction] * topn
             top_inds = np.argsort(-pred)[:topn]
             probs = pred[top_inds]
             classes = [decode(ind) for ind in top_inds]
-            tops = list(zip(top_inds, probs, classes))
+            tops = list(zip(top_inds, probs, classes, dirs))
             all_tops.append(tops)
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
@@ -127,9 +131,13 @@ def eye_test(net, crecords):
     test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
     for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
         print()
-        print(crecord.triple)
-        for icls, prob, rel in tops:
-            print('{:2d} {:.2f} {}'.format(icls, prob, rel))
+        print(crecord.context)
+        true_dir = int(crecord.s_end <= crecord.o_start)
+        _ = list(net._encoder.encode(crecord))  # to get the sdp
+        print(net._encoder.last_sdp)
+        print(true_dir, crecord.triple)
+        for icls, prob, rel, direction in tops:
+            print('{:2d} {:.2f} {} {}'.format(icls, prob, direction, rel))
 
 
 if __name__ == "__main__":
@@ -138,17 +146,17 @@ if __name__ == "__main__":
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
     from experiments.ontology.sub_ont import nlp
-    from experiments.ontology.data import props_dir, load_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import props_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
     from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     batch_size = 1
     prop_case = 'test.balanced0.'
-    model_name = prop_case + 'dr.noaug.v2.2.'
+    model_name = prop_case + 'dr.noaug.v2.2.1.'
 
     scls_file = props_dir + 'prop_classes.{}csv'.format(prop_case)
-    sclasses = load_superclass_mapping(scls_file)
+    sclasses = load_prop_superclass_mapping(scls_file)
     inv_file = props_dir + 'prop_inverse.csv'
     inverse = load_inverse_mapping(inv_file)
     encoder = DBPediaEncoder(nlp, sclasses, inverse)
@@ -156,22 +164,23 @@ if __name__ == "__main__":
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
     log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
 
-    epochs = 4
+    epochs = 6
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
     encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile2()
-    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
-    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    # net.compile2()
+    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
+    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
     log.info('model: {}; epochs: {}'.format(model_name, epochs))
     net._model.summary(line_length=80)
 
-    # eye_test(net, val_data)
+    eye_test(net, val_data)
 
-    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-    log.info('end training')
+    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    # log.info('end training')
+
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print(evals)
     # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases

@@ -1,8 +1,9 @@
 import logging as log
 import os
 import csv
-import re
+import json
 import pickle
+import re
 from collections import defaultdict
 
 import numpy as np
@@ -11,7 +12,7 @@ from rdflib import URIRef
 
 from experiments.ontology.sub_ont import raw, gfall, gf, dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import get_type, final_classes, get_final_class
+from experiments.ontology.sub_ont import get_type, final_classes, get_final_class, get_superclasses_map
 from experiments.ontology.ont_encoder import filter_context
 
 # todo: move from globals
@@ -23,8 +24,8 @@ nlp = English()
 
 
 # Read list of valid properties from the file
-props_dir = '/home/user/datasets/dbpedia/qs/props/'
-props = props_dir + 'all_props_nonlit.csv'
+classes_dir = '/home/user/datasets/dbpedia/qs/props/'
+props = classes_dir + 'all_props_nonlit.csv'
 with open(props, 'r', newline='') as f:
     prop_reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
     valid_props = [URIRef(prop) for prop, n in prop_reader]
@@ -186,10 +187,23 @@ def read_dataset(path):
 ### Auxiliary functions ###
 
 
-props_dir='/home/user/datasets/dbpedia/qs/classes/'
+classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
+superclasses_file = classes_dir + 'classes.map.json'
 
 
-def load_superclass_mapping(filename=props_dir+'prop_classes.csv'):
+def build_superclass_mapping(filename=classes_dir + 'classes.names.all.csv'):
+    with open(filename, 'r', newline='') as f:
+        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
+        names = [URIRef(name) for name, in reader]
+        return get_superclasses_map(names)
+
+
+def load_superclass_mapping(filename=superclasses_file):
+    with open(filename) as f:
+        return json.load(f)
+
+
+def load_prop_superclass_mapping(filename=classes_dir + 'prop_classes.csv'):
     """Mapping between relations and superclasses"""
     classes = {}
     with open(filename, 'r', newline='') as f:
@@ -201,7 +215,7 @@ def load_superclass_mapping(filename=props_dir+'prop_classes.csv'):
     return classes
 
 
-def load_inverse_mapping(filename=props_dir+'prop_inverse.csv'):
+def load_inverse_mapping(filename=classes_dir + 'prop_inverse.csv'):
     """Mapping between superclasses and their inverse superclasses"""
     inverse = {}
     with open(filename, 'r', newline='') as f:
@@ -335,37 +349,33 @@ def make_ner_dataset(output_file, subject_uris, visited=set(), use_all_articles=
     return visited
 
 
-
-# example of training data format
-train_data = [
-    ('Who is Chaka Khan?', [(7, 17, 'PERSON')]),
-    ('I like London and Berlin.', [(7, 13, 'LOC'), (18, 24, 'LOC')])
-]
-
-
 from intervaltree import IntervalTree, Interval
-
-
-# new storage format: not csv
-def train(crecords, nlp):
-    dataset = []
+def transform_ner_dataset(nlp, crecords, superclasses_map=dict()):
+    """
+    Transform dataset from ContextRecords format to spacy-friendly format (json), merging spacy entitiy types with ours.
+    :param nlp: spacy.lang.Language
+    :param crecords: dataset
+    :param superclasses_map: buffer containing mapping from classes to final classes in the ontology hierarchy
+    :return: list of json entities for spacy NER training (with already made Docs)
+    """
     for cr in crecords:
         ents = []
         for er in cr.ents:
-            cls_uri = get_final_class(get_type(dbo[er.uri]))  # todo: use superclasses_map dict?
+            _cls_uri = get_type(dbo[er.uri])
+            cls_uri = superclasses_map.get(_cls_uri, get_final_class(_cls_uri))  # try to get the type from buffer
+            # todo: what if cls_uri has 'bad' type (not in the hierarchy)? (i.e. need to handle None)
+            superclasses_map[_cls_uri] = cls_uri  # add type to buffer (or do nothing useful if it is already there)
             if cls_uri is not None:
                 ent_type = final_classes[cls_uri]
-                # todo: add BILUO tags?
                 ents.append((er.start, er.end, ent_type))
         ents_tree = IntervalTree.from_tuples(ents)
         sent = nlp(cr.context)
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
-        spacy_ents = [(e.start_char, e.end_char, e.ent_type_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
+        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
+        log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
         ents.extend(spacy_ents)
         if len(ents) > 0:
-            dataset.append((cr.context, ents))
-    return dataset
-
+            yield sent, ents
 
 
 ### Tests ###
@@ -430,6 +440,13 @@ if __name__ == "__main__":
     # test_count_data()
     # test_get_contexts(dbr.Microsoft, dbo.product)
 
+    print('started building superclass mapping...')
+    d = build_superclass_mapping().items()
+    with open(superclasses_file, 'w') as f:
+        json.dump(d, f)
+    for k, v in d: print(k.ljust(40), v)
+    exit()
+
     # Make NER dataset
     visited = set()
     subject_uris = set(gf.subjects())
@@ -442,8 +459,7 @@ if __name__ == "__main__":
         print('visited articles (total: {}):'.format(len(visited), visited))
 
     # Try reading the dataset
-    from experiments.data_utils import unpickle
-    print(len(unpickle(output_file)))
+    # from experiments.data_utils import unpickle
     # for i, crecord in enumerate(unpickle(output_file)):
     #     print(i, len(crecord.ents))
 
