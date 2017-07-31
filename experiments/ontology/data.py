@@ -3,10 +3,13 @@ import os
 import csv
 import re
 import pickle
+from collections import defaultdict
 
 import numpy as np
+from fuzzywuzzy import fuzz
 from rdflib import URIRef
-from experiments.ontology.sub_ont import get_contexts, get_article
+
+from experiments.ontology.sub_ont import get_article, get_final_class, get_label
 from experiments.ontology.sub_ont import raw, gfall, gf
 from experiments.ontology.ont_encoder import filter_context
 
@@ -17,6 +20,7 @@ props = props_dir + 'all_props_nonlit.csv'
 with open(props, 'r', newline='') as f:
     prop_reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
     valid_props = [URIRef(prop) for prop, n in prop_reader]
+
 
 def validate(s, r, o):
     """Check if triple is one we want in the dataset."""
@@ -203,15 +207,58 @@ def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
     return dataset
 
 
+###  ###
 
 
+def make_fuzz_metric(fuzz_ratio=80):
+    def fz(t1, t2):
+        return fuzz.ratio(t1, t2) >= fuzz_ratio
+    return fz
 
 
+metric = make_fuzz_metric()
 
-from collections import defaultdict
-from fuzzywuzzy import fuzz
-from experiments.ontology.sub_ont import nlp, get_label
 
+# no rdf interaction
+def fuzzfind_plain(doc, s, r, o):
+    for e in doc.noun_chunks: e.merge()
+    for e in doc.ents: e.merge()
+    for k, sent in enumerate(doc.sents):
+        s0 = s1 = o0 = o1 = -1
+        for i, t in enumerate(sent):
+            # todo: it is possible to match 'better matching' entity
+            ii = t.idx
+            if metric(t.text, s): s0, s1 = ii, ii+len(t)
+            elif metric(t.text, o): o0, o1 = ii, ii+len(t)
+            if s0 >= 0 and o0 >= 0:
+                yield sent, s0, s1, o0, o1
+                break
+
+
+# todo: move from globals
+from spacy.en import English
+nlp = English()
+# from experiments.utils import load_nlp
+# nlp = load_nlp()
+# nlp = load_nlp(batch_size=32)
+
+
+def get_contexts(s, r, o):
+    stext = get_label(s)
+    rtext = get_label(r)
+    otext = get_label(o)
+    s_article = get_article(s)
+    if s_article is not None:
+        sdoc = nlp(s_article['text'])
+        for context in fuzzfind_plain(sdoc, stext, rtext, otext):
+            yield (*context, s_article)
+    # todo: if object is a literal, then maybe we should search by (s, r) pair and literal's type
+    # is_literal = (otext[0] == otext[-1] == '"')
+    o_article = get_article(o)
+    if o_article is not None:
+        odoc = nlp(o_article['text'])
+        for context in fuzzfind_plain(odoc, stext, rtext, otext):
+            yield (*context, o_article)
 
 
 # Complexity: O(O(metric)*len(doc)*len(candidates))
@@ -266,6 +313,30 @@ def make_ner_dataset(output_file, visited=set()):
             if subj_article is not None:
                 # for crecord in get_contexts0([subj_article], objects):
                 visited.add(subj_article['id'])
+
+
+train_data = [
+    ('Who is Chaka Khan?', [(7, 17, 'PERSON')]),
+    ('I like London and Berlin.', [(7, 13, 'LOC'), (18, 24, 'LOC')])
+]
+
+# new storage format: not csv
+def train(nrecords):
+    dataset = []
+    for nr in nrecords:
+        ents = []
+        for er in nr.ents:
+            cls = get_final_class(get_type(dbo[er.uri]))  # todo: use superclasses_map dict?
+            if cls is not None:
+                ent_type = final_ents[cls]
+                # todo: add biluo tags? NEED.
+                # todo: incorporate spacy's own tags
+                ents.append((er.start, er.end, ent_type))
+        if len(ents) > 0:
+            dataset.append((nr.context, ents))
+    return dataset
+
+
 
 ### Tests ###
 

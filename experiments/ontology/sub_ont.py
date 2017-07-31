@@ -47,15 +47,6 @@ gf = ds.get_context(iri_field)
 gmore = ds.get_context(iri_more)
 gfall = ReadOnlyGraphAggregate([gf, gmore])
 
-# Some simple tests
-# gtest = ds.get_context('gtest')
-# gtest.update('INSERT DATA {<s1> <r1> <o1> }')
-# gtest.add((URIRef('s1'), URIRef('r1'), URIRef('o1')))  # analogous
-# print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
-# gtest.update('DELETE DATA {<s1> <r1> <o1> }')
-# print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
-
-
 # It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
 # Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
 @except_safe(EndPointNotFound, HTTPError)
@@ -105,73 +96,6 @@ def get_superclass(uri):
         return uri if c == OWL.Thing else c
     return None
 
-
-def make_fuzz_metric(fuzz_ratio=80):
-    def fz(t1, t2):
-        return fuzz.ratio(t1, t2) >= fuzz_ratio
-    return fz
-
-
-def make_sim_metric(similarity_threshold):
-    def sm(t1, t2):
-        return t1.similarity(t2) >= similarity_threshold
-    return sm
-
-
-def make_metric(ratio=80, partial_ratio=95):
-    def m(x, y):
-        fzr = fuzz.ratio(x, y)
-        fzpr = fuzz.partial_ratio(x, y)
-        return (fzr >= ratio) or\
-               (fzpr >= partial_ratio and fzr >= 0.6)
-    return m
-
-
-metric = make_fuzz_metric()
-
-
-# no rdf interaction
-def fuzzfind_plain(doc, s, r, o):
-    for e in doc.noun_chunks: e.merge()
-    for e in doc.ents: e.merge()
-    for k, sent in enumerate(doc.sents):
-        s0 = s1 = o0 = o1 = -1
-        for i, t in enumerate(sent):
-            # todo: it is possible to match 'better matching' entity
-            ii = t.idx
-            if metric(t.text, s): s0, s1 = ii, ii+len(t)
-            elif metric(t.text, o): o0, o1 = ii, ii+len(t)
-            if s0 >= 0 and o0 >= 0:
-                yield sent, s0, s1, o0, o1
-                break
-
-
-# todo: move from globals
-from spacy.en import English
-nlp = English()
-# from experiments.utils import load_nlp
-# nlp = load_nlp()
-# nlp = load_nlp(batch_size=32)
-
-
-def get_contexts(s, r, o):
-    stext = get_label(s)
-    rtext = get_label(r)
-    otext = get_label(o)
-    s_article = get_article(s)
-    if s_article is not None:
-        sdoc = nlp(s_article['text'])
-        for context in fuzzfind_plain(sdoc, stext, rtext, otext):
-            yield (*context, s_article)
-    # todo: if object is a literal, then maybe we should search by (s, r) pair and literal's type
-    # is_literal = (otext[0] == otext[-1] == '"')
-    o_article = get_article(o)
-    if o_article is not None:
-        odoc = nlp(o_article['text'])
-        for context in fuzzfind_plain(odoc, stext, rtext, otext):
-            yield (*context, o_article)
-
-
 ### Classes ###
 
 
@@ -216,7 +140,6 @@ superclasses2ner_tags = {
 }
 
 
-
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
@@ -229,6 +152,13 @@ def query_raw(q):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    # Some simple tests
+    # gtest = ds.get_context('gtest')
+    # gtest.update('INSERT DATA {<s1> <r1> <o1> }')
+    # gtest.add((URIRef('s1'), URIRef('r1'), URIRef('o1')))  # analogous
+    # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
+    # gtest.update('DELETE DATA {<s1> <r1> <o1> }')
+    # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
 
 
 
