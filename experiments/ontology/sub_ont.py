@@ -100,7 +100,7 @@ def get_superclass(uri):
 
 
 from experiments.ontology.symbols import ENT_CLASSES
-final_classes = set(URIRef(dbo[s]) for s in ENT_CLASSES)
+final_classes = {URIRef(dbo[s]): ent_type for s, ent_type in ENT_CLASSES.items()}
 
 
 def get_final_class(cls):
@@ -123,23 +123,6 @@ def get_superclasses_map(classes):
     return superclasses
 
 
-# todo: make dict-mapping of final uris to final ents
-final_ents = {}
-
-superclasses2ner_tags = {
-    "Person": "PERSON",
-    "Organisation": "ORG",
-    "Place": "LOC",
-    "Settlement": "GPE",
-    "Country": "GPE",
-    "Language": "LANGUAGE",
-    "ProgrammingLanguage": None,
-    "Work": "PRODUCT",
-    "Software": None,
-    "VideoGame": None,
-}
-
-
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
@@ -153,12 +136,12 @@ if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     # Some simple tests
-    # gtest = ds.get_context('gtest')
-    # gtest.update('INSERT DATA {<s1> <r1> <o1> }')
+    gtest = ds.get_context('gtest')
+    gtest.update('INSERT DATA {<s1> <r1> <o1> }')
     # gtest.add((URIRef('s1'), URIRef('r1'), URIRef('o1')))  # analogous
-    # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
-    # gtest.update('DELETE DATA {<s1> <r1> <o1> }')
-    # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
+    print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
+    gtest.update('DELETE DATA {<s1> <r1> <o1> }')
+    print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
 
 
 

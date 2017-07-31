@@ -11,7 +11,7 @@ from rdflib import URIRef
 
 from experiments.ontology.sub_ont import raw, gfall, gf, dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import get_type, final_ents, get_final_class
+from experiments.ontology.sub_ont import get_type, final_classes, get_final_class
 from experiments.ontology.ont_encoder import filter_context
 
 # todo: move from globals
@@ -136,8 +136,11 @@ class EntityRecord:
         self.start = max(0, self.start - begin)
         self.end = min(self.end, end)
 
+    def json(self):
+        return self.span, self.uri
+
     def __str__(self):
-        return '{} [{}:{}]'.format(self.text, self.start, self.end)
+        return '[{}:{}] {}'.format(self.start, self.end, self.text.strip())
 
 
 class ContextRecord:
@@ -162,6 +165,12 @@ class ContextRecord:
     @property
     def span(self):
         return self.start, self.end
+
+    def json(self):
+        return (self.article_id, self.span, self.context, [e.json for e in self.ents])
+
+    def __str__(self):
+        return self.context.strip() + '[' '; '.join(str(e) for e in self.ents) + ']'
 
 
 def read_dataset(path):
@@ -260,10 +269,10 @@ def get_contexts(s, r, o):
             yield (*context, o_article)
 
 
-# Complexity: O(O(metric)*len(doc)*len(candidates))
 def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
     """
     Find all occurrences of candidates in doc and return their char offsets.
+    Complexity (estimate): O(O(metric)*len(doc)*len(candidates))
     :param doc: spacy.Doc
     :param candidates: iterable of strings
     :param metric: mapping of form (str, str)->int
@@ -300,24 +309,27 @@ def get_contexts0(articles, *ents_uris):
             yield crecord
 
 
-def make_ner_dataset(output_file, subject_uris, visited=set()):
+def make_ner_dataset(output_file, subject_uris, visited=set(), use_all_articles=False):
     with open(output_file, 'wb') as f:
         ls = len(subject_uris)
         non_empty = 0
         for i, subject in enumerate(subject_uris, 1):
+            log.info('make_ner_dataset: total crecords: {}'.format(non_empty))
             log.info('make_ner_dataset: subject #{}/{}: {}'.format(i, ls, subject))
             subj_article = get_article(subject)
             if subj_article is not None:
                 objects = set(gf.objects(subject=subject))
-                log.info('make_ner_dataset: objects: {}'.format(objects))
-                articles = [subj_article]
-                # articles = filter(None, map(get_article, objects))
+                articles = filter(None, map(get_article, objects)) if use_all_articles else [subj_article]
                 articles = list(filter(lambda a: a['id'] not in visited, articles))
+                log.info('make_ner_dataset: articles: {}; objects: {}'.format(len(articles), objects))
+                local_non_empty = 0
                 for j, crecord in enumerate(get_contexts0(articles, subject, *objects), 1):
                     le = len(crecord.ents)
-                    non_empty += int(le > 0)
-                    log.info('make_ner_dataset: crecord #{}({}): num ents: {}'.format(j, non_empty, le))
-                    pickle.dump(crecord, f)
+                    local_non_empty += int(le > 0)
+                    log.info('make_ner_dataset: crecord #{}({}): num ents: {}'.format(j, local_non_empty, le))
+                    if le > 0:
+                        pickle.dump(crecord, f)
+                non_empty += local_non_empty
                 # todo: What articles to add to art_ids: all or only the main (subj_article)?
                 visited.add(subj_article['id'])
     return visited
@@ -330,20 +342,28 @@ train_data = [
     ('I like London and Berlin.', [(7, 13, 'LOC'), (18, 24, 'LOC')])
 ]
 
+
+from intervaltree import IntervalTree, Interval
+
+
 # new storage format: not csv
-def train(nrecords):
+def train(crecords, nlp):
     dataset = []
-    for nr in nrecords:
+    for cr in crecords:
         ents = []
-        for er in nr.ents:
-            cls = get_final_class(get_type(dbo[er.uri]))  # todo: use superclasses_map dict?
-            if cls is not None:
-                ent_type = final_ents[cls]
-                # todo: add biluo tags? NEED.
-                # todo: incorporate spacy's own tags
+        for er in cr.ents:
+            cls_uri = get_final_class(get_type(dbo[er.uri]))  # todo: use superclasses_map dict?
+            if cls_uri is not None:
+                ent_type = final_classes[cls_uri]
+                # todo: add BILUO tags?
                 ents.append((er.start, er.end, ent_type))
+        ents_tree = IntervalTree.from_tuples(ents)
+        sent = nlp(cr.context)
+        # Add entities recognised by spacy if they aren't overlapping with any of our entities
+        spacy_ents = [(e.start_char, e.end_char, e.ent_type_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
+        ents.extend(spacy_ents)
         if len(ents) > 0:
-            dataset.append((nr.context, ents))
+            dataset.append((cr.context, ents))
     return dataset
 
 
@@ -413,13 +433,19 @@ if __name__ == "__main__":
     # Make NER dataset
     visited = set()
     subject_uris = set(gf.subjects())
-    output_file = '/home/user/datasets/dbpedia/ner/' + 'crecords.pck'
+    output_file = '/home/user/datasets/dbpedia/ner/' + 'crecords.full.pck'
     try:
-        visited = make_ner_dataset(output_file, subject_uris, visited)
+        visited = make_ner_dataset(output_file, subject_uris, visited, use_all_articles=True)
     except Exception as e:
         print(e)
     finally:
-        print('visited articles:', visited)
+        print('visited articles (total: {}):'.format(len(visited), visited))
+
+    # Try reading the dataset
+    from experiments.data_utils import unpickle
+    print(len(unpickle(output_file)))
+    # for i, crecord in enumerate(unpickle(output_file)):
+    #     print(i, len(crecord.ents))
 
     # Make dataset
     # for prop in valid_props:

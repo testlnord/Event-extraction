@@ -46,6 +46,19 @@ NER_TAGS = [
 
 IOB_TAGS = ['I', 'O', 'B']
 
+ENT_CLASSES = {
+    "Person": "PERSON",
+    "Organisation": "ORG",
+    "Place": "LOC",
+    "Settlement": "GPE",
+    "Country": "GPE",
+    "Language": "LANGUAGE",
+    "ProgrammingLanguage": None,
+    "Work": "PRODUCT",
+    "Software": None,
+    "VideoGame": None,
+}
+
 DEP_TAGS = [
     "acomp",
     "advcl",
