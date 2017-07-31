@@ -9,9 +9,17 @@ import numpy as np
 from fuzzywuzzy import fuzz
 from rdflib import URIRef
 
-from experiments.ontology.sub_ont import get_article, get_final_class, get_label
-from experiments.ontology.sub_ont import raw, gfall, gf
+from experiments.ontology.sub_ont import raw, gfall, gf, dbo, dbr
+from experiments.ontology.sub_ont import get_article, get_label
+from experiments.ontology.sub_ont import get_type, final_ents, get_final_class
 from experiments.ontology.ont_encoder import filter_context
+
+# todo: move from globals
+from spacy.en import English
+nlp = English()
+# from experiments.utils import load_nlp
+# nlp = load_nlp()
+# nlp = load_nlp(batch_size=32)
 
 
 # Read list of valid properties from the file
@@ -128,6 +136,9 @@ class EntityRecord:
         self.start = max(0, self.start - begin)
         self.end = min(self.end, end)
 
+    def __str__(self):
+        return '{} [{}:{}]'.format(self.text, self.start, self.end)
+
 
 class ContextRecord:
     @classmethod
@@ -216,11 +227,8 @@ def make_fuzz_metric(fuzz_ratio=80):
     return fz
 
 
-metric = make_fuzz_metric()
-
-
 # no rdf interaction
-def fuzzfind_plain(doc, s, r, o):
+def fuzzfind_plain(doc, s, r, o, metric = make_fuzz_metric()):
     for e in doc.noun_chunks: e.merge()
     for e in doc.ents: e.merge()
     for k, sent in enumerate(doc.sents):
@@ -235,14 +243,6 @@ def fuzzfind_plain(doc, s, r, o):
                 break
 
 
-# todo: move from globals
-from spacy.en import English
-nlp = English()
-# from experiments.utils import load_nlp
-# nlp = load_nlp()
-# nlp = load_nlp(batch_size=32)
-
-
 def get_contexts(s, r, o):
     stext = get_label(s)
     rtext = get_label(r)
@@ -252,7 +252,6 @@ def get_contexts(s, r, o):
         sdoc = nlp(s_article['text'])
         for context in fuzzfind_plain(sdoc, stext, rtext, otext):
             yield (*context, s_article)
-    # todo: if object is a literal, then maybe we should search by (s, r) pair and literal's type
     # is_literal = (otext[0] == otext[-1] == '"')
     o_article = get_article(o)
     if o_article is not None:
@@ -262,7 +261,15 @@ def get_contexts(s, r, o):
 
 
 # Complexity: O(O(metric)*len(doc)*len(candidates))
-def fuzzfind_plain1(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
+def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
+    """
+    Find all occurrences of candidates in doc and return their char offsets.
+    :param doc: spacy.Doc
+    :param candidates: iterable of strings
+    :param metric: mapping of form (str, str)->int
+    :param metric_threshold: metric threshold
+    :yield: for each sentence in @doc: dict of form {candidate: list of offsets}
+    """
     # Merge noun_chunks and entities to iterate over them along with the simple tokens
     for e in doc.noun_chunks: e.merge()
     for e in doc.ents: e.merge()
@@ -270,51 +277,54 @@ def fuzzfind_plain1(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
         found = defaultdict(list)
         for i, t in enumerate(sent):
             # Choosing 'better matching' entity
-            cent, measured = max([(c, metric(t, c)) for c in candidates], key=lambda tpl: tpl[1])
+            raw_ent, measured = max([(c, metric(t, c)) for c in candidates], key=lambda tpl: tpl[1])
             if measured >= metric_threshold:
-                ii = t.idx
-                found[cent].append((ii, ii+len(t)))
+                ii = t.idx - sent.start_char
+                found[raw_ent].append((ii, ii+len(t)))
         yield sent, found
 
 
 def get_contexts0(articles, *ents_uris):
     """
-    Search for occurences of ents in the articles about ents.
+    Search for occurrences of ents in the articles about ents.
     :param articles: mapping type, containing fields 'text' and 'id'
     :param ents_uris: uris of the ents
     :yield: ContextRecord
     """
-    raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}
+    raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}  # mapping from labels to original uris
     for i, article in enumerate(articles, 1):
-        log.info('get_contexts: article #{} with title:"{}"'.format(i, article['title']))
         doc = nlp(article['text'])
-        for sent, ents_dict in fuzzfind_plain1(doc, *raw_ents.keys()):
+        for sent, ents_dict in fuzzfind(doc, *raw_ents.keys()):
             crecord = ContextRecord.from_span(sent, artid=article['id'])
-            crecord.ents = [EntityRecord(crecord, a, b, uri=raw_ents[raw_ent]) for raw_ent, (a, b) in ents_dict.items()]
+            crecord.ents = [EntityRecord(crecord, a, b, uri=raw_ents[raw_ent]) for raw_ent, offsets in ents_dict.items() for a, b in offsets]
             yield crecord
 
 
-
-def make_ner_dataset(output_file, visited=set()):
+def make_ner_dataset(output_file, subject_uris, visited=set()):
     with open(output_file, 'wb') as f:
-        for subject in gf.subjects():
-            objects = set(gf.objects(subject=subject))
-            # todo: What articles to add to art_ids
-            articles = filter(None, map(get_article, objects))
-            articles = list(filter(lambda a: a['id'] not in visited, articles))
-
+        ls = len(subject_uris)
+        non_empty = 0
+        for i, subject in enumerate(subject_uris, 1):
+            log.info('make_ner_dataset: subject #{}/{}: {}'.format(i, ls, subject))
             subj_article = get_article(subject)
-            objects.add(subject)
-            articles.append(subj_article)
-            for crecord in get_contexts0(articles, *objects):
-                # todo: save
-                pickle.dump(crecord, f)
-
             if subj_article is not None:
-                # for crecord in get_contexts0([subj_article], objects):
+                objects = set(gf.objects(subject=subject))
+                log.info('make_ner_dataset: objects: {}'.format(objects))
+                articles = [subj_article]
+                # articles = filter(None, map(get_article, objects))
+                articles = list(filter(lambda a: a['id'] not in visited, articles))
+                for j, crecord in enumerate(get_contexts0(articles, subject, *objects), 1):
+                    le = len(crecord.ents)
+                    non_empty += int(le > 0)
+                    log.info('make_ner_dataset: crecord #{}({}): num ents: {}'.format(j, non_empty, le))
+                    pickle.dump(crecord, f)
+                # todo: What articles to add to art_ids: all or only the main (subj_article)?
                 visited.add(subj_article['id'])
+    return visited
 
 
+
+# example of training data format
 train_data = [
     ('Who is Chaka Khan?', [(7, 17, 'PERSON')]),
     ('I like London and Berlin.', [(7, 13, 'LOC'), (18, 24, 'LOC')])
@@ -379,33 +389,40 @@ def test_count_data(valid_props=valid_props):
     print('total: {}/{} ~{:.2f}'.format(tt, total, tt/total))
 
 
+def test_get_contexts(subject, relation):
+    subj_article = get_article(subject)
+    objects = set(gf.objects(subject, relation))
+    print(objects)
+    for i, crecord in enumerate(get_contexts0([subj_article], subject, *objects)):
+        print()
+        print(i, 'CONTEXT:', crecord.context.strip())
+        for j, ent in enumerate(crecord.ents):
+            print(j, 'ENT:', ent)
+
+
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test(jbtriples)
-    # exit()
 
     # test_count_data()
-
+    # test_get_contexts(dbr.Microsoft, dbo.product)
 
     # Make NER dataset
     visited = set()
+    subject_uris = set(gf.subjects())
     output_file = '/home/user/datasets/dbpedia/ner/' + 'crecords.pck'
-    make_ner_dataset(output_file, visited)
-    # try:
-    #     pass
-    # except Exception as e:
-    #     print(e)
-    #     print(visited)  # dump if something bad happens
+    try:
+        visited = make_ner_dataset(output_file, subject_uris, visited)
+    except Exception as e:
+        print(e)
+    finally:
+        print('visited articles:', visited)
 
     # Make dataset
     # for prop in valid_props:
     #     triples = gfall.triples((None, prop, None))
     #     filename = contexts_dir+'test0_{}.csv'.format(raw(prop))
     #     make_dataset(triples, filename)
-
-    # prop = dbo.product
-    # triples = gfall.triples((None, prop, None))
-    # make_dataset(triples, contexts_dir+'test3_{}.csv'.format(raw(prop)))
