@@ -4,13 +4,11 @@ from rdflib.namespace import RDF, RDFS, OWL, FOAF, Namespace, URIRef
 from rdflib.store import Store
 from rdflib.plugins.stores.sparqlstore import SPARQLStore, SPARQLUpdateStore
 from rdflib.plugins.stores.sparqlstore import SPARQLWrapper
-from SPARQLWrapper import DIGEST, URLENCODED, POSTDIRECTLY, POST, RDFXML, TURTLE
+from SPARQLWrapper import DIGEST, POST
 from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
 from urllib.error import HTTPError
 
 import json
-import csv
-from collections import defaultdict
 from fuzzywuzzy import fuzz
 
 from experiments.utils import except_safe
@@ -29,13 +27,13 @@ store.setHTTPAuth(DIGEST)
 store.setCredentials(user='dba', passwd='admin')
 ds = Dataset(store, default_union=False)
 
-dbo = Namespace('http://dbpedia.org/ontology/')
-dbr = Namespace('http://dbpedia.org/resource/')
 iri_dbo = 'http://dbpedia.org/ontology'
 iri_dbpedia = 'http://dbpedia.org'
 iri_labels = 'http://dbpedia.org/labels'
 iri_field = 'field'
 iri_more = 'field:more'
+dbo = Namespace('http://dbpedia.org/ontology/')
+dbr = Namespace('http://dbpedia.org/resource/')
 
 # NB: for existing graphs use 'ds.get_context(iri)', for new graphs use 'ds.graph(iri)'
 # errors or silent ignoring of actions (on non-existing graphs) otherwise should be expected...
@@ -56,16 +54,6 @@ gfall = ReadOnlyGraphAggregate([gf, gmore])
 # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
 # gtest.update('DELETE DATA {<s1> <r1> <o1> }')
 # print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
-
-
-def add_triples(query):
-    """
-    Add triples from CONSTRUCT query to subgraph.
-    Query can be of any complexity (using FROM and FROM NAMED simultaneously, for instance)
-    """
-    qres = ds.query(query)  # gen-r of results of the construct query
-    for res in qres:
-        gf.add(res)  # adding to graph 'gf' in RDF Database (context is the graph 'gf')
 
 
 # It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
@@ -92,16 +80,30 @@ def raw(uri):
     return uri.rsplit('/', 1)[-1]
 
 
-def get_labels(): # not ready!
-    res = glo.subject_objects(RDFS.label)
-    return dict([(uri, str(t).split('(')[0].strip(' _')) for uri, t in res])
-
-
 @except_safe(EndPointNotFound, HTTPError)
 def get_label(uri):
     t = list(glo.objects(uri, RDFS.label))
     t = raw(uri) if len(t) == 0 else str(t[0])
     return t.split('(')[0].strip(' _')  # remove disambiguations
+
+
+@except_safe(EndPointNotFound, HTTPError)
+def get_type(uri):  # todo: add handling of literal types?
+    t = list(gdb.objects(uri, RDF.type))
+    return None if len(t) == 0 else t[0]
+
+
+@except_safe(EndPointNotFound, HTTPError)
+def get_superclass(uri):
+    """
+    :param uri: uri of the class to find superclass of
+    :return: uri of superclass, @uri if class has no superclass, else None (e.g. @uri is not a uri of the class)
+    """
+    direct_scls = gdbo.objects(uri, RDFS.subClassOf)
+    if len(direct_scls) > 0:
+        c = direct_scls[0]
+        return uri if c == OWL.Thing else c
+    return None
 
 
 def make_fuzz_metric(fuzz_ratio=80):
@@ -170,6 +172,51 @@ def get_contexts(s, r, o):
             yield (*context, o_article)
 
 
+### Classes ###
+
+
+from experiments.ontology.symbols import ENT_CLASSES
+final_classes = set(URIRef(dbo[s]) for s in ENT_CLASSES)
+
+
+def get_final_class(cls):
+    c = cls
+    while not(c in final_classes or c is None):
+        c = get_superclass(c)
+        if c == cls:
+            return None
+    return c
+
+
+# todo: need all possible @classes to map
+# todo: save final mapping?
+def get_superclasses_map(classes):
+    superclasses = dict()
+    for cls in classes:
+        fc = get_final_class(cls)
+        if fc is not None:
+            superclasses[cls] = fc
+    return superclasses
+
+
+# todo: make dict-mapping of final uris to final ents
+final_ents = {}
+
+superclasses2ner_tags = {
+    "Person": "PERSON",
+    "Organisation": "ORG",
+    "Place": "LOC",
+    "Settlement": "GPE",
+    "Country": "GPE",
+    "Language": "LANGUAGE",
+    "ProgrammingLanguage": None,
+    "Work": "PRODUCT",
+    "Software": None,
+    "VideoGame": None,
+}
+
+
+
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
@@ -181,4 +228,7 @@ def query_raw(q):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+
+
+
 
