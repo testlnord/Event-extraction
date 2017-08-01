@@ -23,8 +23,8 @@ nlp = English()
 
 
 # Read list of valid properties from the file
-classes_dir = '/home/user/datasets/dbpedia/qs/props/'
-props = classes_dir + 'all_props_nonlit.csv'
+props_dir = '/home/user/datasets/dbpedia/qs/props/'
+props = props_dir + 'all_props_nonlit.csv'
 with open(props, 'r', newline='') as f:
     prop_reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
     valid_props = [URIRef(prop) for prop, n in prop_reader]
@@ -301,7 +301,7 @@ def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
         yield sent, found
 
 
-def get_contexts0(articles, *ents_uris):
+def get_contexts0(articles, *ents_uris, n_threads=7):
     """
     Search for occurrences of ents in the articles about ents.
     :param articles: mapping type, containing fields 'text' and 'id'
@@ -309,10 +309,12 @@ def get_contexts0(articles, *ents_uris):
     :yield: ContextRecord
     """
     raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}  # mapping from labels to original uris
-    for i, article in enumerate(articles, 1):
-        doc = nlp(article['text'])
+    ids = [a['id'] for a in articles]
+    texts = (a['text'] for a in articles)
+    docs = nlp.pipe(texts, n_threads=n_threads)
+    for doc, art_id in zip(docs, ids):
         for sent, ents_dict in fuzzfind(doc, *raw_ents.keys()):
-            crecord = ContextRecord.from_span(sent, artid=article['id'])
+            crecord = ContextRecord.from_span(sent, artid=art_id)
             crecord.ents = [EntityRecord(crecord, a, b, uri=raw_ents[raw_ent]) for raw_ent, offsets in ents_dict.items() for a, b in offsets]
             yield crecord
 
@@ -344,15 +346,16 @@ def make_ner_dataset(output_file, subject_uris, visited=set(), use_all_articles=
 
 
 from intervaltree import IntervalTree, Interval
-def transform_ner_dataset(nlp, crecords, superclasses_map=dict()):
+def transform_ner_dataset(nlp, crecords, superclasses_map=dict(), n_threads=7):
     """
-    Transform dataset from ContextRecords format to spacy-friendly format (json), merging spacy entitiy types with ours.
+    Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entitiy types with ours.
     :param nlp: spacy.lang.Language
-    :param crecords: dataset
+    :param crecords: dataset (iterable of ContextRecord-s)
     :param superclasses_map: buffer containing mapping from classes to final classes in the ontology hierarchy
     :return: list of json entities for spacy NER training (with already made Docs)
     """
-    for cr in crecords:
+    sents = nlp.pipe((cr.context for cr in crecords), n_threads=n_threads)
+    for cr, sent in zip(crecords, sents):
         ents = []
         for er in cr.ents:
             assert isinstance(er.uri, URIRef)
@@ -363,11 +366,9 @@ def transform_ner_dataset(nlp, crecords, superclasses_map=dict()):
                 ent_type = final_classes[cls_uri]
                 ents.append((er.start, er.end, ent_type))
         ents_tree = IntervalTree.from_tuples(ents)
-        sent = nlp(cr.context)
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
         spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
         log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
-
         ents.extend(spacy_ents)
         if len(ents) > 0:
             yield sent, ents
@@ -452,7 +453,7 @@ if __name__ == "__main__":
     #     count = all(isinstance(er.uri, URIRef) for er in crecord.ents)
     #     print(i, count)
 
-    # Make dataset
+    # Make relation classification dataset
     # for prop in valid_props:
     #     triples = gfall.triples((None, prop, None))
     #     filename = contexts_dir+'test0_{}.csv'.format(raw(prop))
