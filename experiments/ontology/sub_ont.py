@@ -110,6 +110,7 @@ def get_final_class(cls):
         c = get_superclass(c)
         if c == cls:
             return None
+        cls = c
     return c
 
 

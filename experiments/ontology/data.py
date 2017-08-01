@@ -1,7 +1,6 @@
 import logging as log
 import os
 import csv
-import json
 import pickle
 import re
 from collections import defaultdict
@@ -171,7 +170,7 @@ class ContextRecord:
         return (self.article_id, self.span, self.context, [e.json for e in self.ents])
 
     def __str__(self):
-        return self.context.strip() + '[' '; '.join(str(e) for e in self.ents) + ']'
+        return self.context.strip() + '(' + '; '.join(str(e) for e in self.ents) + ')'
 
 
 def read_dataset(path):
@@ -191,16 +190,11 @@ classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
 superclasses_file = classes_dir + 'classes.map.json'
 
 
-def build_superclass_mapping(filename=classes_dir + 'classes.names.all.csv'):
+def load_superclass_mapping(filename=classes_dir + 'classes.names.all.csv'):
     with open(filename, 'r', newline='') as f:
         reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
         names = [URIRef(name) for name, in reader]
         return get_superclasses_map(names)
-
-
-def load_superclass_mapping(filename=superclasses_file):
-    with open(filename) as f:
-        return json.load(f)
 
 
 def load_prop_superclass_mapping(filename=classes_dir + 'prop_classes.csv'):
@@ -361,11 +355,11 @@ def transform_ner_dataset(nlp, crecords, superclasses_map=dict()):
     for cr in crecords:
         ents = []
         for er in cr.ents:
-            _cls_uri = get_type(dbo[er.uri])
+            assert isinstance(er.uri, URIRef)
+            _cls_uri = get_type(er.uri)
             cls_uri = superclasses_map.get(_cls_uri, get_final_class(_cls_uri))  # try to get the type from buffer
-            # todo: what if cls_uri has 'bad' type (not in the hierarchy)? (i.e. need to handle None)
-            superclasses_map[_cls_uri] = cls_uri  # add type to buffer (or do nothing useful if it is already there)
             if cls_uri is not None:
+                superclasses_map[_cls_uri] = cls_uri  # add type to buffer (or do nothing useful if it is already there)
                 ent_type = final_classes[cls_uri]
                 ents.append((er.start, er.end, ent_type))
         ents_tree = IntervalTree.from_tuples(ents)
@@ -373,6 +367,7 @@ def transform_ner_dataset(nlp, crecords, superclasses_map=dict()):
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
         spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
         log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
+
         ents.extend(spacy_ents)
         if len(ents) > 0:
             yield sent, ents
@@ -440,13 +435,6 @@ if __name__ == "__main__":
     # test_count_data()
     # test_get_contexts(dbr.Microsoft, dbo.product)
 
-    print('started building superclass mapping...')
-    d = build_superclass_mapping().items()
-    with open(superclasses_file, 'w') as f:
-        json.dump(d, f)
-    for k, v in d: print(k.ljust(40), v)
-    exit()
-
     # Make NER dataset
     visited = set()
     subject_uris = set(gf.subjects())
@@ -461,7 +449,8 @@ if __name__ == "__main__":
     # Try reading the dataset
     # from experiments.data_utils import unpickle
     # for i, crecord in enumerate(unpickle(output_file)):
-    #     print(i, len(crecord.ents))
+    #     count = all(isinstance(er.uri, URIRef) for er in crecord.ents)
+    #     print(i, count)
 
     # Make dataset
     # for prop in valid_props:

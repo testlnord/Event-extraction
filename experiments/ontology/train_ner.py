@@ -13,7 +13,7 @@ from experiments.ontology.data import transform_ner_dataset, nlp
 from experiments.ontology.symbols import ENT_CLASSES
 
 
-def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0.5, tags_complete=False):
+def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=False):
     """
     Train (update, actually) spacy entity recogniser
     :param nlp: spacy.lang.Language class, containing EntityRecogniser which is to be trained
@@ -41,19 +41,21 @@ def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0.5, tags_co
     for itn in range(1, iterations+1):
         random.shuffle(train_data)
         loss = 0.
-        for raw_text, entity_offsets in train_data:
-            # doc = nlp.make_doc(raw_text)  # it is already preprocessed
+        for doc, entity_offsets in train_data:
+            doc = nlp.make_doc(doc.text)  # todo: is it needed? data is preprocessed by nlp() call, actually
             gold = GoldParse(doc, entities=entity_offsets)
+
             # By default, the GoldParse class assumes that the entities
             # described by offset are complete, and all other words should
             # have the tag 'O'. You can tell it to make no assumptions
             # about the tag of a word by giving it the tag '-'.
-            if tags_complete:
+            if not tags_complete:
                 for i in range(len(gold.ner)):
                     # if not gold.ner[i].endswith('ANIMAL'):
                     if gold.ner[i] == 'O':
                         gold.ner[i] = '-'
-            nlp.tagger(doc)
+
+            nlp.tagger(doc)  # make predictions
             # As of 1.9, spaCy's parser now lets you supply a dropout probability
             # This might help the model generalize better from only a few examples.
             loss += nlp.entity.update(doc, gold, drop=dropout)
@@ -110,7 +112,7 @@ def some(nlp):
     ]
 
 
-def test_look_(updated_nlp, test_data):
+def test_look(updated_nlp, test_data):
     nums_errors = []
     lengths = []
     for doc, entity_offsets in test_data:
@@ -127,8 +129,10 @@ def test_look_(updated_nlp, test_data):
         for t, true_, pos, s, S in zip(texts, true_ents, positives, raw_spacy_ents, retagged_ents):
             print(t.ljust(20), true_.ljust(12), int(pos), s.ljust(12), S.ljust(12))
         print('errors: {}; error_ratio: {}'.format(num_errors, num_errors / len(doc)))
+    print(nums_errors)
+    print(lengths)
     total = sum(nums_errors)
-    total_ratio = total / sum(lengths)
+    total_ratio = total / sum(lengths) if sum(lengths) > 0 else 0
     print('TOTAL ERRORS: {}; TOTAL_ERROR_RATIO: {}'.format(total, total_ratio))
 
 
@@ -138,17 +142,18 @@ if __name__ == '__main__':
     from experiments.data_utils import split
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    log.info('train_ner: starting...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.pck'
-    dataset = unpickle(dataset_dir + dataset_file)
+    dataset = list(unpickle(dataset_dir + dataset_file))
     sclasses = load_superclass_mapping()
-    dataset = list(transform_ner_dataset(nlp=nlp, crecords=dataset, superclasses_map=sclasses))
-    tr_data, ts_data = split(dataset, (0.8, 0.2))
+    dataset = list(transform_ner_dataset(nlp=nlp, crecords=dataset[:], superclasses_map=sclasses))
+    tr_data, ts_data = split(dataset, (0.9, 0.1))
 
-    log.info('train_ner: started...')
-    train_ner(nlp, tr_data, iterations=5, dropout=0.7)
-    test_look_(nlp, ts_data)
+    log.info('train_ner: starting training...')
+    train_ner(nlp, tr_data, iterations=100, dropout=0., learn_rate=0.01, tags_complete=True)
 
-    # model_dir = 'models'
-    # save_model(nlp, model_dir)
+    save_model(nlp, model_dir='models')
+
+    test_look(nlp, ts_data)
 
