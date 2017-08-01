@@ -26,7 +26,7 @@ POS_TAGS = {
 NER_TAGS = [
     "PERSON",
     "NORP",
-    "FACILITY",
+    # "FACILITY",  # possibly it is not present; 'FAC' used instead
     "ORG",
     "GPE",
     "LOC",
@@ -42,6 +42,12 @@ NER_TAGS = [
     "QUANTITY",
     "ORDINAL",
     "CARDINAL",
+]
+
+# Undocumented, but present in EntityRecogniser model
+NER_TAGS += [
+    'FAC',
+    'LAW',
 ]
 
 IOB_TAGS = ['I', 'O', 'B']

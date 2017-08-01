@@ -35,17 +35,28 @@ def crecord2spans(crecord, nlp):
 
 # Reminder: to change the number of channels, change: self.channels, self.vector_length, self.encode_data
 
+
 class DBPediaEncoder:
     def __init__(self, nlp, superclass_map, inverse_map,
                  expand_context=1, expand_noun_chunks=False, augment_data=False):
+        """
+        Encodes the data into the suitable for the Keras format.
+        :param nlp:
+        :param superclass_map: mapping of base relation types into final relation types used for classification
+        :param inverse_map: mapping of final relation types into their inverse relation types (used for data augmentation)
+        :param expand_context:
+        :param expand_noun_chunks:
+        :param augment_data:
+        """
         self.nlp = nlp
         self.classes = superclass_map
         self.inverse_map = inverse_map
         self.tags = CategoricalTags(set(self.classes.values()))
         self.iob_tags = CategoricalTags(IOB_TAGS)
+        self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(POS_TAGS)
-        self.dep_tags = CategoricalTags(DEP_TAGS + [''])  # some punctuation marks can have no dependency tag
-        self.channels = 4  # iob_tags, pos_tags, dep_tags, word_vectors
+        self.dep_tags = CategoricalTags(DEP_TAGS, default_tag='')  # on the case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
+        self.channels = 5  # iob_tags, ner_tags, pos_tags, dep_tags, word_vectors
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
         self.augment_data = augment_data
@@ -53,7 +64,7 @@ class DBPediaEncoder:
     @property
     def vector_length(self):
         wv = self.wordvec_length
-        return len(self.iob_tags), len(self.pos_tags), len(self.dep_tags), wv
+        return len(self.iob_tags), len(self.ner_tags), len(self.pos_tags), len(self.dep_tags), wv
 
     @property
     def wordvec_length(self):
@@ -65,8 +76,7 @@ class DBPediaEncoder:
 
     def __call__(self, crecords):
         for crecord in crecords:
-            for xy in self.encode(crecord):
-                yield xy
+            yield from self.encode(crecord)
 
     def encode_data(self, s_span, o_span):
         """
@@ -79,13 +89,15 @@ class DBPediaEncoder:
         sdp = expand_ents(sdp, self.expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
         _iob_tags = []
+        _ner_tags = []
         _pos_tags = []
         _dep_tags = []
         _vectors = []
         _wn_hypernyms = []
         for t in sdp:
-            log.debug('token: {}; dep_: {}; pos_: {};'.format(t.text, t.dep_, t.pos_))
+            log.debug('token: {}; ent_type_: {}; dep_: {}; pos_: {};'.format(t.text, t.ent_type_, t.dep_, t.pos_))
             _iob_tags.append(self.iob_tags.encode(t.ent_iob_))
+            _ner_tags.append(self.ner_tags.encode(t.ent_type_))
             _pos_tags.append(self.pos_tags.encode(t.pos_))
             _vectors.append(t.vector)
             # Dependency tags by spacy
@@ -99,8 +111,8 @@ class DBPediaEncoder:
             # WordNet hypernyms' word vectors
             # hyp = get_hypernym(self.nlp, t)
             # _wn_hypernyms.append(np.zeros(self.wordvec_length) if hyp is None else hyp.vector)
-        # data = _iob_tags, _pos_tags, _dep_tags, _vectors, _wn_hypernyms
-        data = _iob_tags, _pos_tags, _dep_tags, _vectors
+        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, _wn_hypernyms
+        data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors
         return tuple(map(np.array, data))
 
     def encode_class(self, crecord):
@@ -124,13 +136,14 @@ class DBPediaEncoder:
             crecord.r = rr
             if rr is not None:
                 rcls = self.encode_class(crecord)
-                # todo: change data somewhow to reflect the change in directionality of the relation
+                # todo: change data somewhow to reflect the change in the directionality of relation
                 rdata = map(np.flipud, data)  # reverse all arrays
                 yield (*rdata, *rcls)
 
 
 from collections import defaultdict
 def sort_simmetric(dataset):
+    """Sort dataset by relation and the directionality of it."""
     direction_sorted = defaultdict(lambda : defaultdict(list))
     for cr in dataset:
         direction = (cr.s_end <= cr.o_start)
@@ -151,15 +164,13 @@ def find_simmetric(dataset):
                     print(' ', cr.context)
 
 
-
 if __name__ == "__main__":
-    from experiments.ontology.sub_ont import nlp
-    from experiments.ontology.data import props_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    # scls_file = props_dir + 'prop_classes.csv'
-    # inv_file = props_dir + 'prop_inverse.csv'
+    # scls_file = classes_dir + 'prop_classes.csv'
+    # inv_file = classes_dir + 'prop_inverse.csv'
     sclasses = load_prop_superclass_mapping()
     inverse = load_inverse_mapping()
     dataset = load_all_data(sclasses, shuffle=False)
