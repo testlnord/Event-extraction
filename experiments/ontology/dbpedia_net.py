@@ -7,7 +7,7 @@ from keras.layers import Dense, LSTM, Input, Concatenate, TimeDistributed, Bidir
 
 from experiments.data_utils import split, visualise
 from experiments.sequencenet import SequenceNet
-from experiments.ontology.ont_encoder import DBPediaEncoder
+from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderBranched
 
 
 class DBPediaNet(SequenceNet):
@@ -30,13 +30,8 @@ class DBPediaNet(SequenceNet):
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
         self._model.compile(loss='categorical_crossentropy', optimizer='adam')
 
-    def compile2(self):
+    def get_model2(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
         input_lens = self._encoder.vector_length
-        min_units = 16
-        aux_dense_units = 256
-
-        dr = 0.5
-        rdr = 0.5
 
         inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
         xlens = [max(min_units, xlen) for xlen in input_lens]  # more units for simpler channels
@@ -51,11 +46,15 @@ class DBPediaNet(SequenceNet):
 
         # todo: add dropout to dense?
         auxs = [Concatenate()(aux_lstms) for aux_lstms in all_aux_lstms]
-        denses = [Dense(aux_dense_units, activation='sigmoid')(aux) for aux in auxs]
 
+        return inputs, auxs
+
+    def compile2(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
+        inputs, auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
+
+        denses = [Dense(aux_dense_units, activation='sigmoid')(aux) for aux in auxs]
         last = Concatenate()(denses)
         output = Dense(self.nbclasses, activation='softmax', name='output')(last)
-
 
         # Multiple outputs
         direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
@@ -68,6 +67,26 @@ class DBPediaNet(SequenceNet):
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
         # self._model = Model(inputs=inputs, outputs=[output])
         # self._model.compile(loss='categorical_crossentropy', optimizer='adam')
+
+    def compile4(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
+        """Compile 2 subnetworks (for two branches of shprtest dependency path)"""
+        inputs1, left_auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
+        inputs2, right_auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
+        inputs = inputs1 + inputs2
+
+        assert(len(left_auxs) == len(right_auxs))
+        aux_levels = [Concatenate()(list(pair)) for pair in zip(left_auxs, right_auxs)]
+
+        denses = [Dense(aux_dense_units, activation='sigmoid')(aux_level) for aux_level in aux_levels]
+        last = Concatenate()(denses)
+        output = Dense(self.nbclasses, activation='softmax', name='output')(last)
+
+        # Multiple outputs
+        direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
+        self._model = Model(inputs=inputs, outputs=[output, direction_output])
+        self._model.compile(optimizer='adam',
+                            loss={'output': 'categorical_crossentropy', 'direction_output': 'binary_crossentropy'},
+                            loss_weights={'output': 1, 'direction_output': 1})
 
     def compile3(self):
         xlens = self._encoder.nbclasses
@@ -105,7 +124,7 @@ class DBPediaNet(SequenceNet):
         return res
 
     # this method is specific for output of form [categorical, binary]
-    def predict(self, subject_object_spans_pairs, topn=1):
+    def predict(self, subject_object_spans_pairs, topn=1, direction_threshold=0.5):
         encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
         preds = []
         directions = []
@@ -115,9 +134,8 @@ class DBPediaNet(SequenceNet):
             directions.extend(directions_batch)
         all_tops = []
         decode = self._encoder.tags.decode
-        threshold = 0.5
         for pred, direction in zip(preds, directions):  # todo: check for multiple outputs
-            direction = int(direction[0] >= threshold)
+            direction = int(direction[0] >= direction_threshold)
             dirs = [direction] * topn
             top_inds = np.argsort(-pred)[:topn]
             probs = pred[top_inds]
@@ -141,25 +159,23 @@ def eye_test(net, crecords):
 
 
 if __name__ == "__main__":
-    np.random.seed(2)
+    # np.random.seed(2)
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
-    from experiments.ontology.sub_ont import nlp
-    from experiments.ontology.data import props_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
     from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     batch_size = 1
     prop_case = 'test.balanced0.'
-    model_name = prop_case + 'dr.noaug.v2.2.1.'
+    model_name = prop_case + 'dr.noaug.v3'
 
-    scls_file = props_dir + 'prop_classes.{}csv'.format(prop_case)
+    scls_file = classes_dir + 'prop_classes.{}csv'.format(prop_case)
     sclasses = load_prop_superclass_mapping(scls_file)
-    inv_file = props_dir + 'prop_inverse.csv'
+    inv_file = classes_dir + 'prop_inverse.csv'
     inverse = load_inverse_mapping(inv_file)
-    encoder = DBPediaEncoder(nlp, sclasses, inverse)
     dataset = load_all_data(sclasses, shuffle=True)
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
     log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
@@ -169,17 +185,19 @@ if __name__ == "__main__":
     val_steps = len(val_data) // batch_size
 
     encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    # net.compile2()
+    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
+    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    net.compile2()
     model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
-    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+
     log.info('model: {}; epochs: {}'.format(model_name, epochs))
     net._model.summary(line_length=80)
 
-    eye_test(net, val_data)
+    # eye_test(net, val_data)
 
-    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-    # log.info('end training')
+    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    log.info('end training')
 
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print(evals)

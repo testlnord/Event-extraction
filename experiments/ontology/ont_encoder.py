@@ -56,10 +56,13 @@ class DBPediaEncoder:
         self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(POS_TAGS)
         self.dep_tags = CategoricalTags(DEP_TAGS, default_tag='')  # on the case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
-        self.channels = 5  # iob_tags, ner_tags, pos_tags, dep_tags, word_vectors
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
         self.augment_data = augment_data
+
+    @property
+    def channels(self):
+        return 5  # iob_tags, ner_tags, pos_tags, dep_tags, word_vectors
 
     @property
     def vector_length(self):
@@ -85,9 +88,10 @@ class DBPediaEncoder:
         :param o_span: object span
         :return: encoded data (tuple of arrays)
         """
-        sdp = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
+        sdp, iroot = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         sdp = expand_ents(sdp, self.expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
+        self.last_sdp_root = iroot
         _iob_tags = []
         _ner_tags = []
         _pos_tags = []
@@ -139,6 +143,19 @@ class DBPediaEncoder:
                 # todo: change data somewhow to reflect the change in the directionality of relation
                 rdata = map(np.flipud, data)  # reverse all arrays
                 yield (*rdata, *rcls)
+
+
+class DBPediaEncoderBranched(DBPediaEncoder):
+    @property
+    def channels(self):
+        return super().channels * 2
+
+    def encode_data(self, s_span, o_span):
+        data = super().encode_data(s_span, o_span)
+        i = self.last_sdp_root
+        left_part = [d[:i+1] for d in data]
+        right_part = [d[i:] for d in data]
+        return left_part + right_part
 
 
 from collections import defaultdict
