@@ -15,8 +15,8 @@ from experiments.ontology.sub_ont import get_type, final_classes, get_final_clas
 from experiments.ontology.ont_encoder import filter_context
 
 # todo: move from globals
-from spacy.en import English
-nlp = English()
+import spacy
+nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # from experiments.utils import load_nlp
 # nlp = load_nlp()
 # nlp = load_nlp(batch_size=32)
