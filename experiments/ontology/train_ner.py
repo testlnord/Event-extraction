@@ -10,18 +10,19 @@ from spacy.tagger import Tagger
 
 from experiments.data_utils import unpickle
 from experiments.ontology.data import transform_ner_dataset, nlp
-from experiments.ontology.symbols import ENT_CLASSES
+from experiments.ontology.symbols import ENT_CLASSES, NER_TAGS
 
 
-def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=False):
+def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=True, train_new=False):
     """
-    Train (update, actually) spacy entity recogniser
+    Train spacy entity recogniser (either the new on or update existing nlp.entity)
     :param nlp: spacy.lang.Language class, containing EntityRecogniser which is to be trained
     :param train_data: dataset in spacy format for training
     :param iterations: num of full iterations through the dataset
     :param learn_rate:
     :param dropout:
     :param tags_complete: if True, then assume that provided entity tags are complete
+    :param train_new: if True, train new EntityRecogniser (not update existing)
     :return:
     """
     # Add new words to vocab
@@ -29,20 +30,19 @@ def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_com
         for word in doc:
             _ = nlp.vocab[word.orth]
 
-    # ner = EntityRecognizer(nlp.vocab, entity_types=entity_types)  # for the full training of zero-state EntityRecognizer
+    # entity_types = [v for v in ENT_CLASSES.values() if v is not None]
+    ner = nlp.entity if not train_new else EntityRecognizer(nlp.vocab, entity_types=NER_TAGS)
     # Add unknown entity types
     for ent_type, spacy_ent_type in ENT_CLASSES.items():
         if spacy_ent_type is None:
-            nlp.entity.add_label(ent_type)
+            ner.add_label(ent_type)
 
-    # You may need to change the learning rate. It's generally difficult to
-    # guess what rate you should set, especially when you have limited data.
-    nlp.entity.model.learn_rate = learn_rate
+    ner.model.learn_rate = learn_rate
     for itn in range(1, iterations+1):
         random.shuffle(train_data)
         loss = 0.
         for doc, entity_offsets in train_data:
-            doc = nlp.make_doc(doc.text)  # todo: is it needed? data is preprocessed by nlp() call, actually
+            doc = nlp.make_doc(doc.text)  # it is needed despite that the data is already preprocessed (by nlp() call)
             gold = GoldParse(doc, entities=entity_offsets)
 
             # By default, the GoldParse class assumes that the entities
@@ -51,14 +51,13 @@ def train_ner(nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_com
             # about the tag of a word by giving it the tag '-'.
             if not tags_complete:
                 for i in range(len(gold.ner)):
-                    # if not gold.ner[i].endswith('ANIMAL'):
                     if gold.ner[i] == 'O':
                         gold.ner[i] = '-'
 
-            nlp.tagger(doc)  # make predictions
+            nlp.tagger(doc)  # make predictions?
             # As of 1.9, spaCy's parser now lets you supply a dropout probability
             # This might help the model generalize better from only a few examples.
-            loss += nlp.entity.update(doc, gold, drop=dropout)
+            loss += ner.update(doc, gold, drop=dropout)
         log.info('train_ner: iter #{}/{}, loss: {}'.format(itn, iterations, loss))
         if loss == 0:
             break
@@ -151,7 +150,7 @@ if __name__ == '__main__':
     tr_data, ts_data = split(dataset, (0.9, 0.1))
 
     log.info('train_ner: starting training...')
-    train_ner(nlp, tr_data, iterations=100, dropout=0., learn_rate=0.01, tags_complete=True)
+    train_ner(nlp, tr_data, iterations=200, dropout=1., learn_rate=0.1, tags_complete=True, train_new=True)
 
     save_model(nlp, model_dir='models')
 
