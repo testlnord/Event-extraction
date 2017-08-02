@@ -100,8 +100,8 @@ def get_superclass(uri):
 ### Classes ###
 
 
-from experiments.ontology.symbols import ENT_CLASSES
-final_classes = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_CLASSES.items()}
+from experiments.ontology.symbols import ENT_MAPPING
+final_classes = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
 
 
 def get_final_class(cls):
@@ -135,7 +135,8 @@ def query_raw(q):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    # print(final_classes)
+    print(final_classes)
+    exit()
 
     # Some simple tests
     gtest = ds.get_context('gtest')
