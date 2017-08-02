@@ -111,34 +111,54 @@ def some(nlp):
     ]
 
 
-def test_look(updated_nlp, test_data):
-    from sklearn.metrics import confusion_matrix
-    cms = []
-    classes = ENT_CLASSES + ['']
+def get_preds(updated_nlp, test_data, nil='O', print_=False):
+    y_true = []
+    y_pred = []
     for old_doc, entity_offsets in test_data:
         raw_doc = updated_nlp.make_doc(old_doc.text)
         gold = GoldParse(raw_doc, entities=entity_offsets)
-        true_ents = [g[2:] for g in gold.ner]
-
-        toktexts = [t.text for t in old_doc]
-        raw_spacy_ents = [t.ent_type_ for t in old_doc]
-
+        true_ents = [g[2:] if g[2:] else nil for g in gold.ner]
+        y_true.extend(true_ents)
         doc = updated_nlp(old_doc.text)
-        pred_ents = [t.ent_type_ for t in doc]
+        pred_ents = [t.ent_type_ if t.ent_type_ else nil for t in doc]
+        y_pred.extend(pred_ents)
+        if print_:
+            toktexts = [t.text for t in old_doc]
+            raw_spacy_ents = [t.ent_type_ if t.ent_type_ else nil for t in old_doc]
+            for d in zip(toktexts, true_ents, raw_spacy_ents, pred_ents):
+                print(''.join([_.ljust(20) for _ in d]))
+    return y_true, y_pred
 
-        # Some statistics
-        cm = confusion_matrix(y_true=true_ents, y_pred=pred_ents, labels=classes)
-        cms.append(cm)
-        trues = sum(cm[i, i] for i in range(len(cm)))
 
-        for t, true_, pos, s, S in zip(toktexts, true_ents, trues, raw_spacy_ents, pred_ents):
-            print(t.ljust(20), true_.ljust(14), int(pos), s.ljust(14), S.ljust(14))
-        print('Confusion matrix:', classes)
-        print(cm)
-        print()
-    all_cm = sum(cms)
-    print('Confusion matrix:', classes)
-    print(all_cm)
+def print_confusion_matrix(cm, labels):
+    from numpy import vectorize, vstack, set_printoptions
+    fp = cm[:-1, -1].sum()
+    fn = cm[-1, :-1].sum()
+    tp = sum([cm[i, i] for i in range(len(cm)-1)])
+    tn = cm[-1, -1]
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    f1 = 2 * precision * recall / (precision + recall)
+    l = max([len(str(x)) for x in cm.flatten()])
+    printer = vectorize(lambda x: str(x)[:l].rjust(l))
+    set_printoptions(linewidth=240)
+    # print(printer(vstack((labels, cm))))
+    print('  ' + ' '.join(printer(labels)))
+    print(cm)
+    print('tn: {}; tp: {}; fp: {}; fn: {}'.format(tn, tp, fp, fn))
+    print('precision: {}; recall: {}; f1: {}'.format(precision, recall, f1))
+    print()
+
+
+def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
+    from sklearn.metrics import confusion_matrix
+    classes = labels + [nil]
+    cm = confusion_matrix(y_true=y_true, y_pred=y_pred, labels=classes)
+    print_confusion_matrix(cm, classes)
+    _classes = ALL_ENT_CLASSES + [nil]
+    _cm = confusion_matrix(y_true=y_true, y_pred=y_pred, labels=_classes)
+    print_confusion_matrix(_cm, _classes)
+    return cm
 
 
 def main():
@@ -148,21 +168,27 @@ def main():
 
     log.info('train_ner: starting...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
-    dataset_file = 'crecords.pck'
+    dataset_file = 'crecords.full.pck'
+    model_dir = 'models3'
+
     dataset = list(unpickle(dataset_dir + dataset_file))
     sclasses = load_superclass_mapping()
-    dataset = list(transform_ner_dataset(nlp, dataset[:], allowed_ent_types=ENT_CLASSES, superclasses_map=sclasses))
+    dataset = list(transform_ner_dataset(nlp, dataset[:], allowed_ent_types=ALL_ENT_CLASSES, superclasses_map=sclasses))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
 
-    log.info('train_ner: starting training...')
-    train_ner(nlp, tr_data, iterations=100, dropout=0.5, learn_rate=0.001, tags_complete=True, train_new=False)
+    # log.info('train_ner: starting training...')
+    # train_ner(nlp, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
 
-    model_dir = 'models2'
-    save_model(nlp, model_dir)
-    # nlp2 = spacy.load('en', path=model_dir)
-    # test_look(nlp2, ts_data)
-
-    test_look(nlp, ts_data)
+    # save_model(nlp, model_dir)
+    nlp2 = spacy.load('en', path=model_dir)
+    print("##### TRAIN DATA #####")
+    tr_trues, tr_preds = get_preds(nlp2, tr_data)
+    print("##### TEST DATA #####")
+    ts_trues, ts_preds = get_preds(nlp2, ts_data)
+    print("##### TRAIN DATA #####")
+    test_look(tr_trues, tr_preds)
+    print("##### TEST DATA #####")
+    test_look(ts_trues, ts_preds)
 
 
 if __name__ == '__main__':
