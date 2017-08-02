@@ -26,7 +26,7 @@ POS_TAGS = {
 NER_TAGS = [
     "PERSON",
     "NORP",
-    # "FACILITY",  # possibly it is not present; 'FAC' used instead
+    "FACILITY",  # possibly it is not present; 'FAC' used instead
     "ORG",
     "GPE",
     "LOC",
@@ -52,7 +52,7 @@ NER_TAGS += [
 
 IOB_TAGS = ['I', 'O', 'B']
 
-ENT_CLASSES = {
+ENT_MAPPING = {
     "Person": "PERSON",
     "Organisation": "ORG",
     "Place": "LOC",
@@ -64,6 +64,10 @@ ENT_CLASSES = {
     "Software": None,
     "VideoGame": None,
 }
+
+NEW_ENT_CLASSES = [db_ent for db_ent, spacy_ent in ENT_MAPPING.items() if spacy_ent is None]
+ENT_CLASSES = list(filter(None, set(ENT_MAPPING.values()))) + NEW_ENT_CLASSES
+ALL_ENT_CLASSES = NER_TAGS + NEW_ENT_CLASSES
 
 DEP_TAGS = [
     "acomp",
