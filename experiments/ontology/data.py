@@ -310,7 +310,7 @@ def get_contexts0(articles, *ents_uris, n_threads=7):
     """
     raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}  # mapping from labels to original uris
     ids = [a['id'] for a in articles]
-    texts = (a['text'] for a in articles)
+    texts = [a['text'] for a in articles]
     docs = nlp.pipe(texts, n_threads=n_threads)
     for doc, art_id in zip(docs, ids):
         for sent, ents_dict in fuzzfind(doc, *raw_ents.keys()):
@@ -346,20 +346,20 @@ def make_ner_dataset(output_file, subject_uris, visited=set(), use_all_articles=
 
 
 from intervaltree import IntervalTree, Interval
-def transform_ner_dataset(nlp, crecords, superclasses_map=dict(), n_threads=7, batch_size=500):
+def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=500):
     """
     Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entitiy types with ours.
     :param nlp: spacy.lang.Language
     :param crecords: dataset (iterable of ContextRecord-s)
+    :param allowed_ent_types: what types to leave from spacy entity recogniser. Don't use spacy ner types altogether if empty
     :param superclasses_map: buffer containing mapping from classes to final classes in the ontology hierarchy
     :param n_threads: n_threads parameter for nlp.pipe()
     :param batch_size: batch_size parameter for nlp.pipe()
     :return: list of json entities for spacy NER training (with already made Docs)
     """
-    sents = nlp.pipe((cr.context for cr in crecords), n_threads=n_threads, batch_size=batch_size)
+    sents = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
+    etypes = set(allowed_ent_types)
     for cr, sent in zip(crecords, sents):
-    # for cr in crecords:
-    #     sent = nlp(cr.context)
         ents = []
         for er in cr.ents:
             assert isinstance(er.uri, URIRef)
@@ -371,7 +371,7 @@ def transform_ner_dataset(nlp, crecords, superclasses_map=dict(), n_threads=7, b
                 ents.append((er.start, er.end, ent_type))
         ents_tree = IntervalTree.from_tuples(ents)
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
-        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if not ents_tree.overlaps(e.start_char, e.end_char)]
+        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if e.label_ in etypes and not ents_tree.overlaps(e.start_char, e.end_char)]
         log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
         ents.extend(spacy_ents)
         if len(ents) > 0:
@@ -432,8 +432,6 @@ def test_get_contexts(subject, relation):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-
-    print()
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
