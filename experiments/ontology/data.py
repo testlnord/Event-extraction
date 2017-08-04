@@ -105,6 +105,10 @@ class RelationRecord:
     def o_spanr(self): return (self.o_startr, self.o_endr)
 
 
+from collections import namedtuple
+EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
+
+
 class EntityRecord:
     def __init__(self, crecord, start, end, uri):
         """
@@ -277,7 +281,65 @@ def get_contexts(s, r, o):
             yield (*context, o_article)
 
 
-def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
+# todo: support RelationRecord None relations
+# todo: do run_extraction
+
+
+def get_article_ents(article_links, graph):
+    for resource_name, offsets_list in article_links.items():
+        # Use only internal wiki links
+        if not resource_name.startswith('http'):
+            uri = dbr[resource_name]
+            # Resolve uris of these filtered links
+            #   could there be some problems with bad uri form?
+            try:
+                next(graph.triples((uri, None, None)))
+            except StopIteration:
+                continue
+            for start, end, surface_form in offsets_list:
+                yield EntityMention(start, end, uri)
+
+
+def merge_ents_offsets(primal_ents, other_ents):
+    """
+    Merge ent lists with non-overlapping entries, giving precedence to primal_ents.
+    :param primal_ents: iterable of tuples of form (begin_offset, end_offset, data)
+    :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
+    :return: merged list of ents
+    """
+    ents_tree = IntervalTree.from_tuples(primal_ents)
+    ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent[0], ent[1])]
+    ents_filtered.extend(primal_ents)
+    return ents_filtered
+
+
+from cytoolz import groupby
+from itertools import permutations
+def resolve_relations(art_id, doc, ents_all, graph):
+    """
+
+    :param art_id: id of the article
+    :param doc: spacy.Doc
+    :param ents_all: List[EntityMention]
+    :param graph: RDFLib.Graph to resolve relations
+    :yield: RelationRecord
+    """
+    # Group entities by sentences
+    sents_bound_tree = IntervalTree.from_tuples([(s.start_char_, s.end_char_, i) for i, s in enumerate(doc.sents)])
+    def index(ent): return sents_bound_tree[ent[0]:ent[1]].pop().data  # help function for convenience
+    ents_in_sents = groupby(index, ents_all)
+    for i, sent in doc.sents:
+        sent_ents = ents_in_sents[i]
+        # Resolve relations: look at all possible pairs and try to resolve them
+        for s, o in permutations(sent_ents, 2):
+            r_uris = list(graph.predicates(s.uri, o.uri))
+            if len(r_uris) == 0: r_uris = [None]
+            for r_uri in r_uris:
+                yield RelationRecord(s.uri, r_uri, o.uri, s.start, s.end, o.start, o.end,
+                                     sent.text, sent.start_char, sent.end_char, artid=art_id)
+
+
+def fuzzfind0(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
     """
     Find all occurrences of candidates in doc and return their char offsets.
     Complexity (estimate): O(O(metric)*len(doc)*len(candidates))
@@ -285,64 +347,76 @@ def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
     :param candidates: iterable of strings
     :param metric: mapping of form (str, str)->int
     :param metric_threshold: metric threshold
-    :yield: for each sentence in @doc: dict of form {candidate: list of offsets}
+    :return: dict of form {candidate: list of char offsets} for found entities in doc
     """
     # Merge noun_chunks and entities to iterate over them along with the simple tokens
     for e in doc.noun_chunks: e.merge()
     for e in doc.ents: e.merge()
-    for k, sent in enumerate(doc.sents):
-        found = defaultdict(list)
-        for i, t in enumerate(sent):
-            # Choosing 'better matching' entity
-            raw_ent, measured = max([(c, metric(t, c)) for c in candidates], key=lambda tpl: tpl[1])
-            if measured >= metric_threshold:
-                ii = t.idx - sent.start_char
-                found[raw_ent].append((ii, ii+len(t)))
-        yield sent, found
+    found = defaultdict(list)
+    for k, t in enumerate(doc):
+        # Choosing 'better matching' entity
+        raw_ent, measured = max([(c, metric(t, c)) for c in candidates], key=lambda tpl: tpl[1])
+        if measured >= metric_threshold:
+            ii = t.idx
+            found[raw_ent].append((ii, ii+len(t)))
+    return found
 
 
-def get_contexts0(articles, *ents_uris, n_threads=7):
+def get_contexts0(docs, *ents_uris):
     """
-    Search for occurrences of ents in the articles about ents.
-    :param articles: mapping type, containing fields 'text' and 'id'
-    :param ents_uris: uris of the ents
-    :yield: ContextRecord
+    Search for occurrences of ents in the docs.
+    :param docs: iterable of spacy.Doc
+    :param ents_uris: uris of the ents to search for
+    :yield: (spacy.Doc, List[EntityMention])
     """
     raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}  # mapping from labels to original uris
-    ids = [a['id'] for a in articles]
-    texts = [a['text'] for a in articles]
-    docs = nlp.pipe(texts, n_threads=n_threads)
-    for doc, art_id in zip(docs, ids):
-        for sent, ents_dict in fuzzfind(doc, *raw_ents.keys()):
-            crecord = ContextRecord.from_span(sent, artid=art_id)
-            crecord.ents = [EntityRecord(crecord, a, b, uri=raw_ents[raw_ent]) for raw_ent, offsets in ents_dict.items() for a, b in offsets]
-            yield crecord
+    for doc in docs:
+        ents_dict = fuzzfind0(doc, *raw_ents.keys())
+        ents_found = [EntityMention(a, b, raw_ents[raw_ent]) for raw_ent, offsets in ents_dict.items() for a, b in offsets]
+        yield doc, ents_found
 
 
-def make_ner_dataset(output_file, subject_uris, visited=set(), use_all_articles=False):
+def run_extraction(graph, subject_uris, visited=set(), use_all_articles=False, n_threads=7, batch_size=1000):
+    """Implements specific policy of extraction (i.e. choice of candidate entities and articles)"""
+    ls = len(subject_uris)
+    for i, subject in enumerate(subject_uris, 1):
+        log.info('subject #{}/{}: {}'.format(i, ls, subject))
+        subj_article = get_article(subject)
+        if subj_article is not None:
+            objects = set(graph.objects(subject=subject))
+            articles = filter(None, map(get_article, objects)) if use_all_articles else [subj_article]
+            articles = list(filter(lambda a: a['id'] not in visited, articles))
+            # todo: What articles to add to art_ids: all or only the main (subj_article)?
+            visited.add(subj_article['id'])
+            log.info('articles: {}; objects: {}'.format(len(articles), objects))
+
+            texts = [article['text'] for article in articles]
+            docs = nlp.pipe(texts, n_threads=n_threads, batch_size=batch_size)
+            for article, (doc, ents_found) in zip(articles, get_contexts0(docs, subject, *objects)):
+                ents_article_gen = get_article_ents(article['links'], graph)
+                ents_all = merge_ents_offsets(ents_found, ents_article_gen)
+                if len(ents_all) > 0:
+                    yield article['id'], doc, ents_all
+
+
+def ner_extractor(todo, graph):
+    for art_id, doc, ents in run_extraction(todo, graph):
+        cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
+        ers = [EntityRecord(cr, *ent) for ent in ents]
+        cr.ers = ers
+        yield cr
+
+
+def relation_extractor(todo, graph):
+    for data in run_extraction(todo, graph):
+        yield from resolve_relations(*data, graph)
+
+
+# Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
+def pickle_writer(output_file, extractor):
     with open(output_file, 'wb') as f:
-        ls = len(subject_uris)
-        non_empty = 0
-        for i, subject in enumerate(subject_uris, 1):
-            log.info('make_ner_dataset: total crecords: {}'.format(non_empty))
-            log.info('make_ner_dataset: subject #{}/{}: {}'.format(i, ls, subject))
-            subj_article = get_article(subject)
-            if subj_article is not None:
-                objects = set(gf.objects(subject=subject))
-                articles = filter(None, map(get_article, objects)) if use_all_articles else [subj_article]
-                articles = list(filter(lambda a: a['id'] not in visited, articles))
-                log.info('make_ner_dataset: articles: {}; objects: {}'.format(len(articles), objects))
-                local_non_empty = 0
-                for j, crecord in enumerate(get_contexts0(articles, subject, *objects), 1):
-                    le = len(crecord.ents)
-                    local_non_empty += int(le > 0)
-                    log.info('make_ner_dataset: crecord #{}({}): num ents: {}'.format(j, local_non_empty, le))
-                    if le > 0:
-                        pickle.dump(crecord, f)
-                non_empty += local_non_empty
-                # todo: What articles to add to art_ids: all or only the main (subj_article)?
-                visited.add(subj_article['id'])
-    return visited
+        for obj in extractor():
+            pickle.dump(obj, f)
 
 
 from intervaltree import IntervalTree, Interval
@@ -369,11 +443,10 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dic
                 superclasses_map[_cls_uri] = cls_uri  # add type to buffer (or do nothing useful if it is already there)
                 ent_type = final_classes[cls_uri]
                 ents.append((er.start, er.end, ent_type))
-        ents_tree = IntervalTree.from_tuples(ents)
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
-        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if e.label_ in etypes and not ents_tree.overlaps(e.start_char, e.end_char)]
+        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if e.label_ in etypes]
         log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
-        ents.extend(spacy_ents)
+        ents = merge_ents_offsets(ents, spacy_ents)
         if len(ents) > 0:
             yield sent, ents
 

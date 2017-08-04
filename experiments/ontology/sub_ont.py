@@ -9,7 +9,6 @@ from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
 from urllib.error import HTTPError
 
 import json
-from fuzzywuzzy import fuzz
 
 from experiments.utils import except_safe
 
@@ -17,7 +16,7 @@ from experiments.utils import except_safe
 dbp_dir = '/home/user/datasets/dbpedia/'
 basedir = '/home/user/datasets/dbpedia/z2016_10/'
 # dir_articles = '/home/user/datasets/dbpedia/articles/'
-dir_articles = '/home/user/datasets/dbpedia/articles2/'
+dir_articles = '/home/user/datasets/dbpedia/articles3/'
 
 update_endpoint = 'http://localhost:8890/sparql-auth'
 # endpoint = 'http://localhost:8890/sparql'  # no update (insert, create graph, whatever...) access
