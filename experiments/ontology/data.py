@@ -11,7 +11,7 @@ from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 from rdflib import URIRef
 
-from experiments.ontology.sub_ont import dbo, dbr
+from experiments.ontology.sub_ont import dbo, dbr, gdb
 from experiments.ontology.sub_ont import get_article, get_label
 from experiments.ontology.sub_ont import get_type, final_classes, get_final_class, get_superclasses_map
 from experiments.ontology.ont_encoder import filter_context
@@ -206,13 +206,12 @@ def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
     return dataset
 
 
-def get_article_ents(article_links, graph):
+def resolve_entities(article_links, graph=gdb):
     for resource_name, offsets_list in article_links.items():
         # Use only internal wiki links
         if not resource_name.startswith('http'):
             uri = dbr[resource_name]
             # Resolve uris of these filtered links
-            #   could there be some problems with bad uri form?
             try:
                 next(graph.triples((uri, None, None)))
             except StopIteration:
@@ -228,12 +227,13 @@ def merge_ents_offsets(primal_ents, other_ents):
     :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
     :return: merged list of ents
     """
-    ents_tree = IntervalTree.from_tuples(primal_ents)
+    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e.end > e.start)
     ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent[0], ent[1])]
     ents_filtered.extend(primal_ents)
     return ents_filtered
 
 
+# todo: need to filter repeated relations?
 def resolve_relations(art_id, doc, ents_all, graph):
     """
 
@@ -244,21 +244,26 @@ def resolve_relations(art_id, doc, ents_all, graph):
     :yield: RelationRecord
     """
     # Group entities by sentences
-    sents_bound_tree = IntervalTree.from_tuples([(s.start_char_, s.end_char_, i) for i, s in enumerate(doc.sents)])
-    def index(ent): return sents_bound_tree[ent[0]:ent[1]].pop().data  # help function for convenience
+    sents_bound_tree = IntervalTree.from_tuples([(s.start_char, s.end_char, i) for i, s in enumerate(doc.sents)])
+    def index(ent):  # help function for convenience
+        # print(list(sorted([tuple(i) for i in sents_bound_tree.all_intervals], key=lambda t: t[0])))
+        # print(ent)
+        sents = sents_bound_tree[ent[0]:ent[1]]
+        if sents: return sents.pop().data
+
     ents_in_sents = groupby(index, ents_all)
-    for i, sent in doc.sents:
-        sent_ents = ents_in_sents[i]
+    for i, sent in enumerate(doc.sents):
+        sent_ents = ents_in_sents.get(i, list())
         # Resolve relations: look at all possible pairs and try to resolve them
         for s, o in permutations(sent_ents, 2):
             r_uris = list(graph.predicates(s.uri, o.uri))
-            if len(r_uris) == 0: r_uris = [None]
+            if len(r_uris) == 0: r_uris.append('')
             for r_uri in r_uris:
                 yield RelationRecord(s.uri, r_uri, o.uri, s.start, s.end, o.start, o.end,
                                      sent.text, sent.start_char, sent.end_char, artid=art_id)
 
 
-def fuzzfind0(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
+def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
     """
     Find all occurrences of candidates in doc and return their char offsets.
     Complexity (estimate): O(O(metric)*len(doc)*len(candidates))
@@ -281,18 +286,18 @@ def fuzzfind0(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
     return found
 
 
-def get_contexts0(docs, *ents_uris):
+def get_contexts(docs, *ents_uris):
     """
     Search for occurrences of ents in the docs.
     :param docs: iterable of spacy.Doc
     :param ents_uris: uris of the ents to search for
-    :yield: (spacy.Doc, List[EntityMention])
+    :yield: List[EntityMention] for each doc in @docs
     """
     raw_ents = {get_label(ent_uri): ent_uri for ent_uri in ents_uris}  # mapping from labels to original uris
     for doc in docs:
-        ents_dict = fuzzfind0(doc, *raw_ents.keys())
+        ents_dict = fuzzfind(doc, *raw_ents.keys())
         ents_found = [EntityMention(a, b, raw_ents[raw_ent]) for raw_ent, offsets in ents_dict.items() for a, b in offsets]
-        yield doc, ents_found
+        yield ents_found
 
 
 def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
@@ -304,19 +309,23 @@ def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, bat
         subj_article = get_article(subject)
         if subj_article is not None:
             objects = set(graph.objects(subject=subject))
-            articles = filter(None, map(get_article, objects)) if use_all_articles else [subj_article]
-            articles = list(filter(lambda a: a['id'] not in visited, articles))
-            # todo: What articles to add to art_ids: all or only the main (subj_article)?
-            visited.add(subj_article['id'])
+            # todo: make parallel requests of get_article
+            articles = map(get_article, objects) if use_all_articles else [subj_article]
+            articles = [a for a in articles if a is not None and a['id'] not in visited]
             log.info('articles: {}; objects: {}'.format(len(articles), objects))
 
+            objects.add(subject)
             texts = [article['text'] for article in articles]
             docs = nlp.pipe(texts, n_threads=n_threads, batch_size=batch_size)
-            for article, (doc, ents_found) in zip(articles, get_contexts0(docs, subject, *objects)):
-                ents_article_gen = get_article_ents(article['links'], graph)
-                ents_all = merge_ents_offsets(ents_found, ents_article_gen)
+            for article, doc in zip(articles, docs):
+                ents_article = list(resolve_entities(article['links']))  # leaving default value of 'graph' parameter
+                candidates = set(ent.uri for ent in ents_article).union(objects)
+                ents_found = next(get_contexts([doc], *candidates))
+
+                ents_all = merge_ents_offsets(ents_article, ents_found)
                 if len(ents_all) > 0:
                     yield article['id'], doc, ents_all
+                visited.add(article['id'])
 
 
 # Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
@@ -324,17 +333,27 @@ def make_dataset(ner_outfile, rc_outfile, graph):
     fner = open(ner_outfile, 'wb')
     frc = open(rc_outfile, 'wb')
 
-    subject_uris = set(gf.subjects())
-    for art_id, doc, ents in run_extraction(graph, subject_uris, use_all_articles=True):
-        cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
-        ers = [EntityRecord(cr, *ent) for ent in ents]
-        cr.ers = ers
+    try:
+        subject_uris = set(graph.subjects())
+        total_rels = 0
+        total_ents = 0
+        for art_id, doc, ents in run_extraction(graph, subject_uris, use_all_articles=False):
+            cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
+            ers = [EntityRecord(cr, *ent) for ent in ents]
+            cr.ers = ers
 
-        pickle.dump(cr, fner)
-        for rrel in resolve_relations(art_id, doc, ents, graph):
-            pickle.dump(rrel, frc)
-    fner.close()
-    frc.close()
+            pickle.dump(cr, fner)
+            j = 0
+            for j, rrel in enumerate(resolve_relations(art_id, doc, ents, graph), 1):
+                log.info('rrel #{}'.format(j))
+                pickle.dump(rrel, frc)
+            total_rels += j
+            total_ents += len(ents)
+            log.info('article_id: {}; #ents: {} (total: {}); rels: {} (total: {})'.format(art_id, len(ents), total_ents, j, total_rels))
+    except:
+        fner.close()
+        frc.close()
+        raise
 
 
 def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=1000):
@@ -368,16 +387,48 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dic
             yield doc, ents
 
 
+def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
+    objects = set(graph.objects(subject, relation))
+    articles = [get_article(subject)]
+    if test_all: articles.extend(map(get_article, objects))
+    docs = list(nlp.pipe([art['text'] for art in articles]))
+
+    # for i, (art_id, doc, ents) in enumerate(zip(docs, get_contexts(docs, subject, *objects))):
+    for i, (doc, ents_found) in enumerate(zip(docs, get_contexts(docs, subject, *objects))):
+        article = articles[i]
+        ents_article = list(resolve_entities(article['links']))
+        ents_all = merge_ents_offsets(ents_found, ents_article)
+        diff = set(ents_all) - set(ents_found)
+        print('diff ents:', len(diff))
+        print('doc #{}'.format(i))
+
+        ents = ents_all  # to test all
+        # ents = ents_found  # to test found
+        # ents = ents_article  # to test only article's native ents
+
+        total_local = 0
+        for j, rrel in enumerate(resolve_relations(article['id'], doc, ents, graph)):
+            if rrel.relation.startswith(dbo):  # only predicates from dbo namespace
+                total_local += 1
+                s = '{}({})'.format(j, total_local)
+                print(s, repr(rrel.context.strip()))
+                print(' '*len(s), *map(str, rrel.triple))
+        print('total relations locally: {}'.format(total_local))
+
+
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    from experiments.ontology.sub_ont import gf
+    from experiments.ontology.sub_ont import gf, gfall, gdb, gdbo
     from pathlib import Path
 
-    data_dir = Path('/home/user/datasets/dbpedia/')
-    ner_out = data_dir / 'ner' / 'crecords.v2.full.pck'
-    rc_out = data_dir / 'rc' / 'rrecords.full.pck'
-    make_dataset(ner_out, rc_out, graph=gf)
+    # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
+    # exit()
+
+    data_dir = '/home/user/datasets/dbpedia/'
+    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.pck')
+    make_dataset(ner_out, rc_out, graph=gfall)
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
