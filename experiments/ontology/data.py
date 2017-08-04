@@ -2,14 +2,16 @@ import logging as log
 import os
 import csv
 import pickle
-import re
-from collections import defaultdict
+from collections import defaultdict, namedtuple
+from cytoolz import groupby
+from itertools import permutations
 
 import numpy as np
 from fuzzywuzzy import fuzz
+from intervaltree import IntervalTree
 from rdflib import URIRef
 
-from experiments.ontology.sub_ont import raw, gfall, gf, dbo, dbr
+from experiments.ontology.sub_ont import dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
 from experiments.ontology.sub_ont import get_type, final_classes, get_final_class, get_superclasses_map
 from experiments.ontology.ont_encoder import filter_context
@@ -22,39 +24,10 @@ nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # nlp = load_nlp(batch_size=32)
 
 
-# Read list of valid properties from the file
 props_dir = '/home/user/datasets/dbpedia/qs/props/'
-props = props_dir + 'all_props_nonlit.csv'
-with open(props, 'r', newline='') as f:
-    prop_reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
-    valid_props = [URIRef(prop) for prop, n in prop_reader]
-
-
-def validate(s, r, o):
-    """Check if triple is one we want in the dataset."""
-    return r in valid_props
-
-
 contexts_dir = '/home/user/datasets/dbpedia/contexts/'
-delimiter = ' '
-quotechar = '|'
-quoting = csv.QUOTE_NONNUMERIC
-
-
-def make_dataset(triples, output_path, mode='w'):
-    log_total = 0
-    header = ['s', 'r', 'o', 's_start', 's_end', 'o_start', 'o_end', 'context', 'context_start', 'context_end', 'article_id']
-    with open(output_path, mode, newline='') as f:
-        writer = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)  # todo:adjust
-        if mode == 'w': writer.writerow(header)
-        for i, triple in enumerate(triples, 1):
-            if validate(*triple):
-                log.info('make_dataset: processing triple #{}: {}'.format(i, [str(t) for t in triple]))
-                for j, (ctx, s0, s1, o0, o1, art) in enumerate(get_contexts(*triple), 1):
-                    # write both the text and its' source
-                    log_total += 1
-                    log.info('make_dataset: contex #{} (total: {})'.format(j, log_total))
-                    writer.writerow(list(triple) + [s0, s1, o0, o1, ctx.text.strip(), ctx.start_char, ctx.end_char] + [int(art['id'])])
+classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
+superclasses_file = classes_dir + 'classes.map.json'
 
 
 class RelationRecord:
@@ -105,7 +78,6 @@ class RelationRecord:
     def o_spanr(self): return (self.o_startr, self.o_endr)
 
 
-from collections import namedtuple
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
 
 
@@ -177,21 +149,16 @@ class ContextRecord:
         return self.context.strip() + '(' + '; '.join(str(e) for e in self.ents) + ')'
 
 
+
+# for old data
 def read_dataset(path):
     with open(path, 'r', newline='') as f:
-        reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
+        reader = csv.reader(f, delimiter=' ', quotechar='|', quoting=csv.QUOTE_NONNUMERIC)
         header = next(reader)
         log.info('read_dataset: header: {}'.format(header))
         # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
         for data in reader:
             yield RelationRecord(*data)
-
-
-### Auxiliary functions ###
-
-
-classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
-superclasses_file = classes_dir + 'classes.map.json'
 
 
 def load_superclass_mapping(filename=classes_dir + 'classes.names.all.csv'):
@@ -239,52 +206,6 @@ def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
     return dataset
 
 
-###  ###
-
-
-def make_fuzz_metric(fuzz_ratio=80):
-    def fz(t1, t2):
-        return fuzz.ratio(t1, t2) >= fuzz_ratio
-    return fz
-
-
-# no rdf interaction
-def fuzzfind_plain(doc, s, r, o, metric = make_fuzz_metric()):
-    for e in doc.noun_chunks: e.merge()
-    for e in doc.ents: e.merge()
-    for k, sent in enumerate(doc.sents):
-        s0 = s1 = o0 = o1 = -1
-        for i, t in enumerate(sent):
-            # todo: it is possible to match 'better matching' entity
-            ii = t.idx
-            if metric(t.text, s): s0, s1 = ii, ii+len(t)
-            elif metric(t.text, o): o0, o1 = ii, ii+len(t)
-            if s0 >= 0 and o0 >= 0:
-                yield sent, s0, s1, o0, o1
-                break
-
-
-def get_contexts(s, r, o):
-    stext = get_label(s)
-    rtext = get_label(r)
-    otext = get_label(o)
-    s_article = get_article(s)
-    if s_article is not None:
-        sdoc = nlp(s_article['text'])
-        for context in fuzzfind_plain(sdoc, stext, rtext, otext):
-            yield (*context, s_article)
-    # is_literal = (otext[0] == otext[-1] == '"')
-    o_article = get_article(o)
-    if o_article is not None:
-        odoc = nlp(o_article['text'])
-        for context in fuzzfind_plain(odoc, stext, rtext, otext):
-            yield (*context, o_article)
-
-
-# todo: support RelationRecord None relations
-# todo: do run_extraction
-
-
 def get_article_ents(article_links, graph):
     for resource_name, offsets_list in article_links.items():
         # Use only internal wiki links
@@ -313,8 +234,6 @@ def merge_ents_offsets(primal_ents, other_ents):
     return ents_filtered
 
 
-from cytoolz import groupby
-from itertools import permutations
 def resolve_relations(art_id, doc, ents_all, graph):
     """
 
@@ -376,8 +295,9 @@ def get_contexts0(docs, *ents_uris):
         yield doc, ents_found
 
 
-def run_extraction(graph, subject_uris, visited=set(), use_all_articles=False, n_threads=7, batch_size=1000):
+def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
     """Implements specific policy of extraction (i.e. choice of candidate entities and articles)"""
+    visited = set()
     ls = len(subject_uris)
     for i, subject in enumerate(subject_uris, 1):
         log.info('subject #{}/{}: {}'.format(i, ls, subject))
@@ -399,30 +319,27 @@ def run_extraction(graph, subject_uris, visited=set(), use_all_articles=False, n
                     yield article['id'], doc, ents_all
 
 
-def ner_extractor(todo, graph):
-    for art_id, doc, ents in run_extraction(todo, graph):
+# Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
+def make_dataset(ner_outfile, rc_outfile, graph):
+    fner = open(ner_outfile, 'wb')
+    frc = open(rc_outfile, 'wb')
+
+    subject_uris = set(gf.subjects())
+    for art_id, doc, ents in run_extraction(graph, subject_uris, use_all_articles=True):
         cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
         ers = [EntityRecord(cr, *ent) for ent in ents]
         cr.ers = ers
-        yield cr
+
+        pickle.dump(cr, fner)
+        for rrel in resolve_relations(art_id, doc, ents, graph):
+            pickle.dump(rrel, frc)
+    fner.close()
+    frc.close()
 
 
-def relation_extractor(todo, graph):
-    for data in run_extraction(todo, graph):
-        yield from resolve_relations(*data, graph)
-
-
-# Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
-def pickle_writer(output_file, extractor):
-    with open(output_file, 'wb') as f:
-        for obj in extractor():
-            pickle.dump(obj, f)
-
-
-from intervaltree import IntervalTree, Interval
-def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=500):
+def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=1000):
     """
-    Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entitiy types with ours.
+    Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entity types with ours.
     :param nlp: spacy.lang.Language
     :param crecords: dataset (iterable of ContextRecord-s)
     :param allowed_ent_types: what types to leave from spacy entity recogniser. Don't use spacy ner types altogether if empty
@@ -431,9 +348,9 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dic
     :param batch_size: batch_size parameter for nlp.pipe()
     :return: list of json entities for spacy NER training (with already made Docs)
     """
-    sents = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
+    docs = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
     etypes = set(allowed_ent_types)
-    for cr, sent in zip(crecords, sents):
+    for cr, doc in zip(crecords, docs):
         ents = []
         for er in cr.ents:
             assert isinstance(er.uri, URIRef)
@@ -444,94 +361,29 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dic
                 ent_type = final_classes[cls_uri]
                 ents.append((er.start, er.end, ent_type))
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
-        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in sent.ents if e.label_ in etypes]
-        log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(sent.ents)))
+        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
+        log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(doc.ents)))
         ents = merge_ents_offsets(ents, spacy_ents)
         if len(ents) > 0:
-            yield sent, ents
-
-
-### Tests ###
-
-
-def test(triples):
-    for triple in triples:
-        ctxs = list(get_contexts(*triple))
-        print(len(ctxs), triple, '\n')
-        for i, ctx_data in enumerate(ctxs):
-            print('_' * 40, i)
-            print(ctx_data[0])
-
-
-def test_count_data(valid_props=valid_props):
-    # Count how much data did we get
-    total = total_extracted = total_filtered = 0
-    for prop in valid_props:
-        print('\n\nPROPERTY:', prop)
-        filename = contexts_dir+'test4_{}.csv'.format(raw(prop))
-        data = list(read_dataset(filename))
-        triples = list(gfall.triples((None, prop, None)))
-        filtered = 0
-        for i, crecord in enumerate(data, 1):
-            # s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid = crecord
-            if re.search('\n+', crecord.context.strip()):
-                print(i, crecord.triple)
-                print(crecord.context)
-                fct = filter_context(crecord)
-                filtered += bool(fct is None)
-                print('<{}>'.format(fct.context if fct is not None else None))
-        total_filtered += filtered
-        # Count
-        nb_all = len(triples)
-        nb_extracted = len(data)
-        print('{}: {}/{} ~{:.2f}'.format(prop, nb_extracted, nb_all, nb_extracted/nb_all))
-        total += nb_all
-        total_extracted += nb_extracted
-    tt = total_extracted - total_filtered
-    print('filtered/extracted: {}/{} ~{:.2f}'.format(total_filtered, total_extracted, total_filtered/total_extracted))
-    print('total: {}/{} ~{:.2f}'.format(tt, total, tt/total))
-
-
-def test_get_contexts(subject, relation):
-    subj_article = get_article(subject)
-    objects = set(gf.objects(subject, relation))
-    print(objects)
-    for i, crecord in enumerate(get_contexts0([subj_article], subject, *objects)):
-        print()
-        print(i, 'CONTEXT:', crecord.context.strip())
-        for j, ent in enumerate(crecord.ents):
-            print(j, 'ENT:', ent)
+            yield doc, ents
 
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    from experiments.ontology.sub_ont import gf
+    from pathlib import Path
+
+    data_dir = Path('/home/user/datasets/dbpedia/')
+    ner_out = data_dir / 'ner' / 'crecords.v2.full.pck'
+    rc_out = data_dir / 'rc' / 'rrecords.full.pck'
+    make_dataset(ner_out, rc_out, graph=gf)
+
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
-    # test(jbtriples)
-
-    # test_count_data()
-    # test_get_contexts(dbr.Microsoft, dbo.product)
-
-    # Make NER dataset
-    visited = set()
-    subject_uris = set(gf.subjects())
-    output_file = '/home/user/datasets/dbpedia/ner/' + 'crecords.full.pck'
-    try:
-        visited = make_ner_dataset(output_file, subject_uris, visited, use_all_articles=True)
-    except Exception as e:
-        print(e)
-    finally:
-        print('visited articles (total: {}):'.format(len(visited), visited))
 
     # Try reading the dataset
     # from experiments.data_utils import unpickle
     # for i, crecord in enumerate(unpickle(output_file)):
     #     count = all(isinstance(er.uri, URIRef) for er in crecord.ents)
     #     print(i, count)
-
-    # Make relation classification dataset
-    # for prop in valid_props:
-    #     triples = gfall.triples((None, prop, None))
-    #     filename = contexts_dir+'test0_{}.csv'.format(raw(prop))
-    #     make_dataset(triples, filename)
