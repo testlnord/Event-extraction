@@ -7,7 +7,7 @@ from keras.layers import Dense, LSTM, Input, Concatenate, TimeDistributed, Bidir
 
 from experiments.data_utils import split, visualise
 from experiments.sequencenet import SequenceNet
-from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderBranched
+from experiments.ontology.ont_encoder import *
 
 
 class DBPediaNet(SequenceNet):
@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
-    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_rc_data_old
     from experiments.ontology.ont_encoder import crecord2spans
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
@@ -176,16 +176,18 @@ if __name__ == "__main__":
     sclasses = load_prop_superclass_mapping(scls_file)
     inv_file = classes_dir + 'prop_inverse.csv'
     inverse = load_inverse_mapping(inv_file)
-    dataset = load_all_data(sclasses, shuffle=True)
+    encoder = DBPediaEncoder(nlp, sclasses)
+    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
+    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
+    # encoder = EncoderDataAugmenter(encoder, inverse)
+
+    dataset = load_rc_data_old(sclasses, shuffle=True)
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
     log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
-
     epochs = 6
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
-    encoder = DBPediaEncoder(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
     model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)

@@ -35,6 +35,7 @@ def split(slicible, splits, batch_size=1):
     return subsets
 
 
+# todo: add handling of file objects
 def unpickle(filename):
     with open(filename, 'rb') as f:
         while True:
