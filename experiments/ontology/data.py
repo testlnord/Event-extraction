@@ -2,11 +2,11 @@ import logging as log
 import os
 import csv
 import pickle
+import random
 from collections import defaultdict, namedtuple
 from cytoolz import groupby
 from itertools import permutations
 
-import numpy as np
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 from rdflib import URIRef
@@ -14,7 +14,7 @@ from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 
 from experiments.ontology.sub_ont import dbo, dbr, gdb
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import get_type, final_classes, get_final_class, get_superclasses_map
+from experiments.ontology.sub_ont import get_type, NERTypeResolver
 from experiments.ontology.ont_encoder import filter_context
 
 # todo: move from globals
@@ -32,7 +32,9 @@ superclasses_file = classes_dir + 'classes.map.json'
 
 
 class RelationRecord:
-    def __init__(self, s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid):
+    def __init__(self, s: URIRef, r: URIRef, o: URIRef,
+                 s0: int, s1: int, o0: int, o1: int,
+                 ctext, cstart, cend, artid):
         # self.s = self.subject = URIRef(s)
         # self.r = self.relation = URIRef(r)
         # self.o = self.object = URIRef(o)
@@ -58,6 +60,14 @@ class RelationRecord:
         self.o1 = self.o_end = min(self.o1, self.cend)
 
     @property
+    def direction(self): return (self.s_end <= self.o_start)  # is direction of relation the same as order of (s, o) in the context
+
+    @property
+    def valid_offsets(self):
+        return (self.s_start < self.s_end) and (self.o_start < self.o_end) and \
+               (self.cstart < self.cend) and (self.s_spanr != self.o_spanr)
+
+    @property
     def triple(self): return (self.subject, self.relation, self.object)
 
     @property
@@ -77,6 +87,9 @@ class RelationRecord:
 
     @property
     def o_spanr(self): return (self.o_startr, self.o_endr)
+
+    def __str__(self):
+        return '\n'.join((' '.join('<{}>'.format(x) for x in self.triple), self.context.strip()))
 
 
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
@@ -162,11 +175,20 @@ def read_dataset(path):
             yield RelationRecord(*data)
 
 
-def load_superclass_mapping(filename=classes_dir + 'classes.names.all.csv'):
-    with open(filename, 'r', newline='') as f:
-        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC)
-        names = [URIRef(name) for name, in reader]
-        return get_superclasses_map(names)
+# for old (.csv) format of relation records
+def load_rc_data_old(classes, data_dir=contexts_dir, shuffle=True):
+    """Load ContextRecords with classes from @classes from all files in the directory @data_dir and shuffle it."""
+    dataset = []
+    for filename in os.listdir(data_dir):
+        filepath = os.path.join(data_dir, filename)
+        if os.path.isfile(filepath):
+            for crecord in read_dataset(filepath):
+                if crecord.relation in classes:
+                    filtered = filter_context(crecord)
+                    if filtered is not None:
+                        dataset.append(filtered)
+    if shuffle: random.shuffle(dataset)
+    return dataset
 
 
 def load_prop_superclass_mapping(filename=classes_dir + 'prop_classes.csv'):
@@ -192,19 +214,25 @@ def load_inverse_mapping(filename=classes_dir + 'prop_inverse.csv'):
     return inverse
 
 
-def load_all_data(classes, data_dir=contexts_dir, shuffle=True):
-    """Load ContextRecords with classes from @classes from all files in the directory @data_dir and shuffle it."""
-    dataset = []
-    for filename in os.listdir(data_dir):
-        filepath = os.path.join(data_dir, filename)
-        if os.path.isfile(filepath):
-            for crecord in read_dataset(filepath):
-                if crecord.relation in classes:
-                    filtered = filter_context(crecord)
-                    if filtered is not None:
-                        dataset.append(filtered)
-    if shuffle: np.random.shuffle(dataset)
-    return dataset
+def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=True):
+    """
+    Load data for relation classification given paths to pickled RelationRecords and make basic filtering.
+    :param allowed_classes: keep only these relation classes (specified in URI form)
+    :param rc_file: path to file with pickled RelationRecords
+    :param rc_neg_file: path to file with pickled negative RelationRecords (i.e. no relation)
+    :param neg_ratio: max ratio of #negatives to #positive records (i.e. how much negatives to load)
+    :param shuffle: bool, shuffle or not dataset
+    :return: List[RelationRecord]
+    """
+    _classes = set(allowed_classes)
+    from experiments.data_utils import unpickle
+    from itertools import islice
+    rc = [filter_context(rr) for rr in unpickle(rc_file) if rr.relation in _classes]
+    nb_neg = int(len(rc) * neg_ratio)
+    rc_neg = list(islice((filter_context(rr) for rr in unpickle(rc_neg_file)), nb_neg))
+    rc.extend(rc_neg)
+    if shuffle: random.shuffle(rc)
+    return rc
 
 
 def resolve_entities(article_links, graph=gdb):
@@ -249,7 +277,8 @@ def resolve_relations(art_id, doc, ents_all, graph):
     """
     # Group entities by sentences
     sents_bound_tree = IntervalTree.from_tuples([(s.start_char, s.end_char, i) for i, s in enumerate(doc.sents)])
-    def index(ent):  # help function for convenience
+    def index(ent):
+        # Help function for convenience
         # print(list(sorted([tuple(i) for i in sents_bound_tree.all_intervals], key=lambda t: t[0])))
         # print(ent)
         sents = sents_bound_tree[ent[0]:ent[1]]
@@ -257,7 +286,7 @@ def resolve_relations(art_id, doc, ents_all, graph):
 
     ents_in_sents = groupby(index, ents_all)
     for i, sent in enumerate(doc.sents):
-        sent_ents = ents_in_sents.get(i, list())
+        sent_ents = ents_in_sents.get_by_uri(i, list())
         # Resolve relations: look at all possible pairs and try to resolve them
         for s, o in permutations(sent_ents, 2):
             r_uris = list(graph.predicates(s.uri, o.uri))
@@ -373,7 +402,7 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, graph
         frc0.close()
 
 
-def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=1000):
+def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NERTypeResolver(), n_threads=7, batch_size=1000):
     """
     Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entity types with ours.
     :param nlp: spacy.lang.Language
@@ -390,11 +419,8 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dic
         ents = []
         for er in cr.ents:
             assert isinstance(er.uri, URIRef)
-            _cls_uri = get_type(er.uri)
-            cls_uri = superclasses_map.get(_cls_uri, get_final_class(_cls_uri))  # try to get the type from buffer
-            if cls_uri is not None:
-                superclasses_map[_cls_uri] = cls_uri  # add type to buffer (or do nothing useful if it is already there)
-                ent_type = final_classes[cls_uri]
+            ent_type = ner_type_resolver.get_by_uri(er.uri)
+            if ent_type is not None:
                 ents.append((er.start, er.end, ent_type))
         # Add entities recognised by spacy if they aren't overlapping with any of our entities
         spacy_ents = [(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
@@ -431,6 +457,10 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
                 print(s, repr(rrel.context.strip()))
                 print(' '*len(s), *map(str, rrel.triple))
         print('total relations locally: {}'.format(total_local))
+
+
+def sample_rrecords():
+    from random import sample
 
 
 if __name__ == "__main__":

@@ -162,18 +162,16 @@ def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
 
 
 def main():
-    from experiments.ontology.data import load_superclass_mapping
     from experiments.data_utils import split
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     log.info('train_ner: starting...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
-    dataset_file = 'crecords.full.pck'
-    model_dir = 'models3'
+    dataset_file = 'crecords.v2.pck'
+    model_dir = 'models_v2'
 
     dataset = list(unpickle(dataset_dir + dataset_file))
-    sclasses = load_superclass_mapping()
-    dataset = list(transform_ner_dataset(nlp, dataset[:], allowed_ent_types=ALL_ENT_CLASSES, superclasses_map=sclasses))
+    dataset = list(transform_ner_dataset(nlp, dataset[:], allowed_ent_types=ALL_ENT_CLASSES))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
 
     # log.info('train_ner: starting training...')

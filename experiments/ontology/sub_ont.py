@@ -46,6 +46,7 @@ gf = ds.get_context(iri_field)
 gmore = ds.get_context(iri_more)
 gfall = ReadOnlyGraphAggregate([gf, gmore])
 
+
 # It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
 # Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
 @except_safe(EndPointNotFound, HTTPError)
@@ -96,30 +97,38 @@ def get_superclass(uri):
     return None
 
 
-### Classes ###
+class NERTypeResolver:
+    from experiments.ontology.symbols import ENT_MAPPING
+    # Map uris of final classes to its' names
+    final_classes_names = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
 
+    def __init__(self, raw_classes=tuple()):
+        self.superclasses_map = self.get_superclasses_map(raw_classes)
 
-from experiments.ontology.symbols import ENT_MAPPING
-final_classes = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
+    def get_by_uri(self, uri, default_type=None):
+        type_uri = get_type(uri)
+        final_type_uri = self.superclasses_map.get(type_uri, self.get_final_class(type_uri))  # try to get the type from buffer
+        if final_type_uri is not None:
+            self.superclasses_map[type_uri] = final_type_uri  # add type to buffer (or do nothing useful if it is already there)
+            default_type = self.final_classes_names[final_type_uri]
+        return default_type
 
+    def get_final_class(self, cls):
+        c = cls
+        while not(c in self.final_classes_names or c is None):
+            c = get_superclass(c)
+            if c == cls:
+                return None
+            cls = c
+        return c
 
-def get_final_class(cls):
-    c = cls
-    while not(c in final_classes or c is None):
-        c = get_superclass(c)
-        if c == cls:
-            return None
-        cls = c
-    return c
-
-
-def get_superclasses_map(classes):
-    superclasses = dict()
-    for cls in classes:
-        fc = get_final_class(cls)
-        if fc is not None:
-            superclasses[cls] = fc
-    return superclasses
+    def get_superclasses_map(self, classes):
+        superclasses = dict()
+        for cls in classes:
+            fc = self.get_final_class(cls)
+            if fc is not None:
+                superclasses[cls] = fc
+        return superclasses
 
 
 def query_raw(q):
@@ -134,7 +143,7 @@ def query_raw(q):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    print(final_classes)
+    print(NERTypeResolver.final_classes_names)
     exit()
 
     # Some simple tests
