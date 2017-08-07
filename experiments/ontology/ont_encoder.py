@@ -1,13 +1,19 @@
 import logging as log
 import re
 from copy import copy
+from collections import defaultdict
 
 import numpy as np
-import spacy
 
 from experiments.tags import CategoricalTags
 from experiments.ontology.symbols import POS_TAGS, DEP_TAGS, IOB_TAGS, NER_TAGS
 from experiments.nlp_utils import *
+
+
+def transform_lists(text):
+    rex = '^- +'  # todo: why it doesn't work?
+    # group all subsequent '-' lines; make from them comma-list
+    # using previous Section name or previous sentence (especially if it ends on colon)
 
 
 def filter_context(crecord):
@@ -19,14 +25,15 @@ def filter_context(crecord):
     ends, starts = zip(*matches) if len(matches) != 0 else ([], [])
     starts = [0] + list(starts)
     ends = list(ends) + [len(ctext)]
-    spans = list(zip(starts, ends))
-    itree = IntervalTree.from_tuples(spans)
-    ssent = itree[crecord.s_startr:crecord.s_endr]
-    if ssent == itree[crecord.o_startr:crecord.o_endr]:
-        p = ssent.pop()
-        cr = copy(crecord)
-        cr.cut_context(p.begin, p.end)
-        return cr
+    spans = [(a, b) for a, b in zip(starts, ends) if a < b]
+    if crecord.valid_offsets:  # just in case
+        itree = IntervalTree.from_tuples(spans)
+        ssent = itree[crecord.s_startr:crecord.s_endr]
+        if ssent == itree[crecord.o_startr:crecord.o_endr]:
+            p = ssent.pop()
+            cr = copy(crecord)
+            cr.cut_context(p.begin, p.end)
+            return cr
 
 
 def crecord2spans(crecord, nlp):
@@ -37,28 +44,25 @@ def crecord2spans(crecord, nlp):
 
 
 class DBPediaEncoder:
-    def __init__(self, nlp, superclass_map, inverse_map,
-                 expand_context=1, expand_noun_chunks=False, augment_data=False):
+    def __init__(self, nlp, superclass_map,
+                 expand_context=1, expand_noun_chunks=False):
         """
-        Encodes the data into the suitable for the Keras format.
+        Encodes the data into the suitable for the Keras format. Uses Shortest Dependency Tree (SDP) assumption.
         :param nlp:
-        :param superclass_map: mapping of base relation types into final relation types used for classification
-        :param inverse_map: mapping of final relation types into their inverse relation types (used for data augmentation)
-        :param expand_context:
-        :param expand_noun_chunks:
-        :param augment_data:
+        :param superclass_map: mapping of base relation types (uris) into final relation types used for classification
+        :param expand_context: expand context around key tokens in SDP
+        :param expand_noun_chunks: whether to expand parts of noun chunks in SDP into full noun chunks
         """
         self.nlp = nlp
         self.classes = superclass_map
-        self.inverse_map = inverse_map
-        self.tags = CategoricalTags(set(self.classes.values()))
+        # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
+        self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
         self.iob_tags = CategoricalTags(IOB_TAGS)
         self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(POS_TAGS)
-        self.dep_tags = CategoricalTags(DEP_TAGS, default_tag='')  # on the case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
+        self.dep_tags = CategoricalTags(DEP_TAGS, default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
-        self.augment_data = augment_data
 
     @property
     def channels(self):
@@ -127,22 +131,42 @@ class DBPediaEncoder:
         """
         raw_cls = self.classes.get(crecord.r)
         cls = self.tags.encode(raw_cls)
-        direction = (crecord.s_end <= crecord.o_start)  # is direction of relation the same as order of (s, o) in the context
-        return np.array(cls), int(direction)
+        return np.array(cls), int(crecord.direction)
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
         data = self.encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
         yield (*data, *cls)
-        if self.augment_data:
-            rr = self.inverse_map.get(crecord.r)
-            crecord.r = rr
-            if rr is not None:
-                rcls = self.encode_class(crecord)
-                # todo: change data somewhow to reflect the change in the directionality of relation
-                rdata = map(np.flipud, data)  # reverse all arrays
-                yield (*rdata, *rcls)
+
+
+class DBPediaEncoderWithEntTypes(DBPediaEncoder):
+    from experiments.ontology.sub_ont import NERTypeResolver
+    from experiments.ontology.symbols import ENT_CLASSES
+    _ner_type_resolver = NERTypeResolver()
+    _ent_tags = CategoricalTags(ENT_CLASSES, default_tag='')
+
+    def _encode_type(self, uri):
+        return self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
+
+    @property
+    def channels(self):
+        return super().channels + 2
+
+    # todo: linking with existing uri should happen here
+    # def encode_data(self, s_span, o_span):
+    #     data = super().encode_data(s_span, o_span)
+    #     uri = None
+    #     s_type = self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
+    #     o_type = self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
+
+    def encode(self, crecord):
+        s_span, o_span = crecord2spans(crecord, self.nlp)
+        data = super().encode_data(s_span, o_span)  # do not use data linking (hence, super()), use info from crecord instead
+        cls = self.encode_class(crecord)
+        s_type = self._encode_type(crecord.subject)
+        o_type = self._encode_type(crecord.object)
+        yield (*data, s_type, o_type, *cls)
 
 
 class DBPediaEncoderBranched(DBPediaEncoder):
@@ -158,7 +182,32 @@ class DBPediaEncoderBranched(DBPediaEncoder):
         return left_part + right_part
 
 
-from collections import defaultdict
+class EncoderDataAugmenter:
+    """Wrapper of DBPediaEncoder for data augmentation."""
+    def __init__(self, encoder, inverse_map):
+        """
+        :param encoder: DBPediaEncoder or its' subclass
+        :param inverse_map: mapping of final relation types into their inverse relation types (used for data augmentation)
+        """
+        self.inverse_map = inverse_map
+        self.encoder = encoder
+
+    def encode(self, crecord):
+        e = self.encoder
+        s_span, o_span = crecord2spans(crecord, e.nlp)
+        data = e.encode_data(s_span, o_span)
+        cls = e.encode_class(crecord)
+        yield (*data, *cls)
+
+        rr = self.inverse_map.get(crecord.r)
+        crecord.r = rr
+        if rr is not None:
+            rcls = e.encode_class(crecord)
+            # todo: change data somewhow to reflect the change in the directionality of relation
+            rdata = map(np.flipud, data)  # reverse all arrays
+            yield (*rdata, *rcls)
+
+
 def sort_simmetric(dataset):
     """Sort dataset by relation and the directionality of it."""
     direction_sorted = defaultdict(lambda : defaultdict(list))
@@ -182,7 +231,7 @@ def find_simmetric(dataset):
 
 
 if __name__ == "__main__":
-    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_all_data
+    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_rc_data_old
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
@@ -190,7 +239,7 @@ if __name__ == "__main__":
     # inv_file = classes_dir + 'prop_inverse.csv'
     sclasses = load_prop_superclass_mapping()
     inverse = load_inverse_mapping()
-    dataset = load_all_data(sclasses, shuffle=False)
+    dataset = load_rc_data_old(sclasses, shuffle=False)
     encoder = DBPediaEncoder(nlp, sclasses, inverse)
     c = encoder.channels
 
