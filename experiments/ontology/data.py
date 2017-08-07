@@ -10,6 +10,7 @@ import numpy as np
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 from rdflib import URIRef
+from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 
 from experiments.ontology.sub_ont import dbo, dbr, gdb
 from experiments.ontology.sub_ont import get_article, get_label
@@ -214,7 +215,10 @@ def resolve_entities(article_links, graph=gdb):
             # Resolve uris of these filtered links
             try:
                 next(graph.triples((uri, None, None)))
-            except StopIteration:
+            except (StopIteration, QueryBadFormed):
+                continue
+            except Exception as e:  # sparqlstore cat throw excetion of generic type
+                log.warning('resolve_entities: ignoring exception: {}'.format(e))
                 continue
             for start, end, surface_form in offsets_list:
                 yield EntityMention(start, end, uri)
@@ -309,10 +313,9 @@ def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, bat
         subj_article = get_article(subject)
         if subj_article is not None:
             objects = set(graph.objects(subject=subject))
-            # todo: make parallel requests of get_article
             articles = map(get_article, objects) if use_all_articles else [subj_article]
             articles = [a for a in articles if a is not None and a['id'] not in visited]
-            log.info('articles: {}; objects: {}'.format(len(articles), objects))
+            log.info('articles: {}; objects: {}'.format(len(articles), tuple(map(str, objects))))
 
             objects.add(subject)
             texts = [article['text'] for article in articles]
@@ -329,13 +332,17 @@ def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, bat
 
 
 # Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
-def make_dataset(ner_outfile, rc_outfile, graph):
+def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, graph):
     fner = open(ner_outfile, 'wb')
     frc = open(rc_outfile, 'wb')
+    frc2 = open(rc_other_outfile, 'wb')
+    frc0 = open(rc_no_outfile, 'wb')
 
+    counter = defaultdict(int)
     try:
         subject_uris = set(graph.subjects())
         total_rels = 0
+        total_rels_filtered = 0
         total_ents = 0
         for art_id, doc, ents in run_extraction(graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
@@ -343,17 +350,27 @@ def make_dataset(ner_outfile, rc_outfile, graph):
             cr.ers = ers
 
             pickle.dump(cr, fner)
-            j = 0
+            nb_filtered = 0
             for j, rrel in enumerate(resolve_relations(art_id, doc, ents, graph), 1):
-                log.info('rrel #{}'.format(j))
-                pickle.dump(rrel, frc)
+                counter[rrel.relation] += 1
+                if not rrel.relation:
+                    pickle.dump(rrel, frc0)
+                elif rrel.relation.startswith(dbo):
+                    nb_filtered += 1
+                    pickle.dump(rrel, frc)
+                else:
+                    pickle.dump(rrel, frc2)
             total_rels += j
+            total_rels_filtered += nb_filtered
             total_ents += len(ents)
-            log.info('article_id: {}; #ents: {} (total: {}); rels: {} (total: {})'.format(art_id, len(ents), total_ents, j, total_rels))
-    except:
+            log.info('article_id: {}; #ents: {} (total: {}); rels: {} (filtered: {}; total_filtered: {}; total: {})'
+                     .format(art_id, len(ents), total_ents, j, nb_filtered, total_rels_filtered, total_rels))
+    finally:
+        print(dict(counter))
         fner.close()
         frc.close()
-        raise
+        frc2.close()
+        frc0.close()
 
 
 def transform_ner_dataset(nlp, crecords, allowed_ent_types, superclasses_map=dict(), n_threads=7, batch_size=1000):
@@ -420,15 +437,16 @@ if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     from experiments.ontology.sub_ont import gf, gfall, gdb, gdbo
-    from pathlib import Path
 
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
     # exit()
 
     data_dir = '/home/user/datasets/dbpedia/'
     ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.pck')
-    make_dataset(ner_out, rc_out, graph=gfall)
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
+    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    make_dataset(ner_out, rc_out, rc2_out, rc0_out, graph=gfall)
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
