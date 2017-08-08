@@ -3,19 +3,23 @@ import os
 import csv
 import pickle
 import random
+import re
+from copy import copy
 from collections import defaultdict, namedtuple
-from cytoolz import groupby
-from itertools import permutations
+from itertools import permutations, islice
+from multiprocessing import Pool
 
+from cytoolz import groupby
 from fuzzywuzzy import fuzz
-from intervaltree import IntervalTree
+from intervaltree import IntervalTree, Interval
 from rdflib import URIRef
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 
 from experiments.ontology.sub_ont import dbo, dbr, gdb
+from experiments.ontology.sub_ont import gf, gfall, gdb, gdbo
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import get_type, NERTypeResolver
-from experiments.ontology.ont_encoder import filter_context
+from experiments.ontology.sub_ont import NERTypeResolver
+from experiments.data_utils import unpickle
 
 # todo: move from globals
 import spacy
@@ -60,7 +64,12 @@ class RelationRecord:
         self.o1 = self.o_end = min(self.o1, self.cend)
 
     @property
-    def direction(self): return (self.s_end <= self.o_start)  # is direction of relation the same as order of (s, o) in the context
+    def direction(self):
+        """
+        Is direction of relation the same as order of (s, o) in the context.
+        :return: None, True or False
+        """
+        return None if not bool(self.relation) else (self.s_end <= self.o_start)
 
     @property
     def valid_offsets(self):
@@ -164,6 +173,30 @@ class ContextRecord:
 
 
 
+def filter_context(crecord):
+    """Only chooses the sentence where the entities (subject and object) are present.
+    Does not yield other sentences. Returns original crecord if it is valid."""
+    ctext = crecord.context
+    rex = '\n+'
+    matches = [m.span() for m in re.finditer(rex, ctext)]
+    ends, starts = zip(*matches) if len(matches) != 0 else ([], [])
+    starts = [0] + list(starts)
+    ends = list(ends) + [len(ctext)]
+    spans = [(a, b) for a, b in zip(starts, ends) if a < b]
+    if crecord.valid_offsets:  # just in case
+        itree = IntervalTree.from_tuples(spans)
+        ssent = itree[crecord.s_startr:crecord.s_endr]
+        if ssent == itree[crecord.o_startr:crecord.o_endr]:
+            p = ssent.pop()
+            cr = copy(crecord)
+            cr.cut_context(p.begin, p.end)
+            return cr
+
+
+def filter_contexts(crecords):
+    return list(filter(None, map(filter_context, crecords)))
+
+
 # for old data
 def read_dataset(path):
     with open(path, 'r', newline='') as f:
@@ -225,11 +258,9 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=Tr
     :return: List[RelationRecord]
     """
     _classes = set(allowed_classes)
-    from experiments.data_utils import unpickle
-    from itertools import islice
-    rc = [filter_context(rr) for rr in unpickle(rc_file) if rr.relation in _classes]
+    rc = list(filter(None, [filter_context(rr) for rr in unpickle(rc_file) if str(rr.relation) in _classes]))
     nb_neg = int(len(rc) * neg_ratio)
-    rc_neg = list(islice((filter_context(rr) for rr in unpickle(rc_neg_file)), nb_neg))
+    rc_neg = list(islice(filter(None, (filter_context(rr) for rr in unpickle(rc_neg_file))), nb_neg))
     rc.extend(rc_neg)
     if shuffle: random.shuffle(rc)
     return rc
@@ -259,14 +290,14 @@ def merge_ents_offsets(primal_ents, other_ents):
     :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
     :return: merged list of ents
     """
-    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e.end > e.start)
+    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e[0] < e[1])
     ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent[0], ent[1])]
     ents_filtered.extend(primal_ents)
     return ents_filtered
 
 
 # todo: need to filter repeated relations?
-def resolve_relations(art_id, doc, ents_all, graph):
+def resolve_relations(art_id, doc, ents_all, graph=gdb):
     """
 
     :param art_id: id of the article
@@ -286,8 +317,10 @@ def resolve_relations(art_id, doc, ents_all, graph):
 
     ents_in_sents = groupby(index, ents_all)
     for i, sent in enumerate(doc.sents):
-        sent_ents = ents_in_sents.get_by_uri(i, list())
+        sent_ents = ents_in_sents.get(i, list())
         # Resolve relations: look at all possible pairs and try to resolve them
+        # NB: multiple entries of the same entities could produce almost identical RelationRecords,
+        #   i.e. same contexts and triples, only spans are different (but it is expected behaviour)
         for s, o in permutations(sent_ents, 2):
             r_uris = list(graph.predicates(s.uri, o.uri))
             if len(r_uris) == 0: r_uris.append('')
@@ -333,15 +366,25 @@ def get_contexts(docs, *ents_uris):
         yield ents_found
 
 
-def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
-    """Implements specific policy of extraction (i.e. choice of candidate entities and articles)"""
+def run_extraction(inner_graph, outer_graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
+    """
+    Implements specific policy of extraction (i.e. choice of candidate entities and articles)
+    :param inner_graph: for example, domain-specific graph
+    :param outer_graph: the whole known 'world' to resolve entities from
+    :param subject_uris: candidate entities to search for links with them
+    :param use_all_articles:
+    :param n_threads:
+    :param batch_size:
+    :yield: Tuple(article id, spacy.Doc, List[EntityMention])
+    """
     visited = set()
     ls = len(subject_uris)
     for i, subject in enumerate(subject_uris, 1):
         log.info('subject #{}/{}: {}'.format(i, ls, subject))
         subj_article = get_article(subject)
         if subj_article is not None:
-            objects = set(graph.objects(subject=subject))
+            # Search linked objects only in the provided, likely domain-specific 'world' (inner_graph)
+            objects = set(inner_graph.objects(subject=subject))
             articles = map(get_article, objects) if use_all_articles else [subj_article]
             articles = [a for a in articles if a is not None and a['id'] not in visited]
             log.info('articles: {}; objects: {}'.format(len(articles), tuple(map(str, objects))))
@@ -350,7 +393,8 @@ def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, bat
             texts = [article['text'] for article in articles]
             docs = nlp.pipe(texts, n_threads=n_threads, batch_size=batch_size)
             for article, doc in zip(articles, docs):
-                ents_article = list(resolve_entities(article['links']))  # leaving default value of 'graph' parameter
+                # Resolving entities from the whole 'world' (outer_graph)
+                ents_article = list(resolve_entities(article['links'], graph=outer_graph))
                 candidates = set(ent.uri for ent in ents_article).union(objects)
                 ents_found = next(get_contexts([doc], *candidates))
 
@@ -361,7 +405,7 @@ def run_extraction(graph, subject_uris, use_all_articles=False, n_threads=7, bat
 
 
 # Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
-def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, graph):
+def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner_graph=gf, outer_graph=gdb):
     fner = open(ner_outfile, 'wb')
     frc = open(rc_outfile, 'wb')
     frc2 = open(rc_other_outfile, 'wb')
@@ -369,21 +413,23 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, graph
 
     counter = defaultdict(int)
     try:
-        subject_uris = set(graph.subjects())
+        subject_uris = set(inner_graph.subjects())
         total_rels = 0
         total_rels_filtered = 0
         total_ents = 0
-        for art_id, doc, ents in run_extraction(graph, subject_uris, use_all_articles=False):
+        # NB: using outer_graph for the search of objects for subject_uris!
+        for art_id, doc, ents in run_extraction(outer_graph, outer_graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
             ers = [EntityRecord(cr, *ent) for ent in ents]
-            cr.ers = ers
-
+            cr.ents = ers
             pickle.dump(cr, fner)
+
             nb_filtered = 0
-            for j, rrel in enumerate(resolve_relations(art_id, doc, ents, graph), 1):
+            for j, rrel in enumerate(resolve_relations(art_id, doc, ents, graph=outer_graph), 1):
                 counter[rrel.relation] += 1
                 if not rrel.relation:
                     pickle.dump(rrel, frc0)
+                # todo: make genric filtering function?
                 elif rrel.relation.startswith(dbo):
                     nb_filtered += 1
                     pickle.dump(rrel, frc)
@@ -402,32 +448,36 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, graph
         frc0.close()
 
 
-def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NERTypeResolver(), n_threads=7, batch_size=1000):
+def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NERTypeResolver(), n_threads=8, batch_size=1000):
     """
     Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entity types with ours.
     :param nlp: spacy.lang.Language
     :param crecords: dataset (iterable of ContextRecord-s)
     :param allowed_ent_types: what types to leave from spacy entity recogniser. Don't use spacy ner types altogether if empty
     :param superclasses_map: buffer containing mapping from classes to final classes in the ontology hierarchy
-    :param n_threads: n_threads parameter for nlp.pipe()
+    :param n_threads: n_threads parameter for nlp.pipe() and multiprocessing.Pool
     :param batch_size: batch_size parameter for nlp.pipe()
     :return: list of json entities for spacy NER training (with already made Docs)
     """
-    docs = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
     etypes = set(allowed_ent_types)
-    for cr, doc in zip(crecords, docs):
-        ents = []
-        for er in cr.ents:
-            assert isinstance(er.uri, URIRef)
-            ent_type = ner_type_resolver.get_by_uri(er.uri)
-            if ent_type is not None:
-                ents.append((er.start, er.end, ent_type))
-        # Add entities recognised by spacy if they aren't overlapping with any of our entities
-        spacy_ents = [(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
-        log.info('transform ner: our ents: {}; merged spacy ents: {} (total spacy ents: {})'.format(len(ents), len(spacy_ents), len(doc.ents)))
-        ents = merge_ents_offsets(ents, spacy_ents)
-        if len(ents) > 0:
-            yield doc, ents
+    docs = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
+
+    with Pool(processes=n_threads) as pool:
+        for cr, doc in zip(crecords, docs):
+            ents = []
+            uris = [er.uri for er in cr.ents]
+
+            ent_types = filter(None, pool.map(ner_type_resolver.get_by_uri, uris))
+            # ent_types = filter(None, map(ner_type_resolver.get_by_uri, uris))
+            ents.extend((er.start, er.end, ent_type) for er, ent_type in zip(cr.ents, ent_types))
+
+            # Add entities recognised by spacy if they aren't overlapping with any of our entities
+            spacy_ents = [(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
+            lo = len(ents)
+            ents = merge_ents_offsets(ents, spacy_ents)
+            log.info('transform ner: our ents: {}; merged ents: {} (spacy ents: {})'.format(lo, len(ents), len(spacy_ents)))
+            if len(ents) > 0:
+                yield doc, ents
 
 
 def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
@@ -436,8 +486,8 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
     if test_all: articles.extend(map(get_article, objects))
     docs = list(nlp.pipe([art['text'] for art in articles]))
 
-    # for i, (art_id, doc, ents) in enumerate(zip(docs, get_contexts(docs, subject, *objects))):
     for i, (doc, ents_found) in enumerate(zip(docs, get_contexts(docs, subject, *objects))):
+
         article = articles[i]
         ents_article = list(resolve_entities(article['links']))
         ents_all = merge_ents_offsets(ents_found, ents_article)
@@ -459,24 +509,24 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
         print('total relations locally: {}'.format(total_local))
 
 
-def sample_rrecords():
-    from random import sample
-
-
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    from experiments.ontology.sub_ont import gf, gfall, gdb, gdbo
-
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
-    # exit()
 
     data_dir = '/home/user/datasets/dbpedia/'
-    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
-    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
-    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
-    make_dataset(ner_out, rc_out, rc2_out, rc0_out, graph=gfall)
+    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.full.pck')
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.filtered.pck')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.negative.pck')
+    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.other.pck')
+    make_dataset(ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+
+    # Load classes names
+    # ner_counts = '/home/user/datasets/dbpedia/ner/crecords.v2.counts.json'
+    # with open(ner_counts) as f:
+    #     import json
+    #     classes = [URIRef(x) for x in json.load(f).keys()]
+    # ntr = NERTypeResolver(classes)
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
