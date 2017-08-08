@@ -5,9 +5,7 @@ import numpy as np
 from keras.models import Model
 from keras.layers import Dense, LSTM, Input, Concatenate, TimeDistributed, Bidirectional, MaxPool1D, Dropout
 
-from experiments.data_utils import split, visualise
 from experiments.sequencenet import SequenceNet
-from experiments.ontology.ont_encoder import *
 
 
 class DBPediaNet(SequenceNet):
@@ -57,10 +55,12 @@ class DBPediaNet(SequenceNet):
         output = Dense(self.nbclasses, activation='softmax', name='output')(last)
 
         # Multiple outputs
-        direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
+        # todo: abstract num classes (i.e. num of direction classes (not binary, but categorical crossentropy))
+        direction_output = Dense(3, activation='sigmoid', name='direction_output')(last)
+
         self._model = Model(inputs=inputs, outputs=[output, direction_output])
         self._model.compile(optimizer='adam',
-                            loss={'output': 'categorical_crossentropy', 'direction_output': 'binary_crossentropy'},
+                            loss={'output': 'categorical_crossentropy', 'direction_output': 'categorical_crossentropy'},
                             loss_weights={'output': 1, 'direction_output': 1})
 
         # Single output
@@ -134,18 +134,22 @@ class DBPediaNet(SequenceNet):
             directions.extend(directions_batch)
         all_tops = []
         decode = self._encoder.tags.decode
+        dirdecode = self._encoder.direction_tags.decode
         for pred, direction in zip(preds, directions):  # todo: check for multiple outputs
-            direction = int(direction[0] >= direction_threshold)
-            dirs = [direction] * topn
+            # todo: decode dir classes (arg_max etc.)
+            # direction = int(direction[0] >= direction_threshold)
+            # direction = dirdecode(direction)
+            # dirs = [direction] * topn
             top_inds = np.argsort(-pred)[:topn]
             probs = pred[top_inds]
             classes = [decode(ind) for ind in top_inds]
-            tops = list(zip(top_inds, probs, classes, dirs))
+            tops = list(zip(top_inds, probs, classes))
             all_tops.append(tops)
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
 
-def eye_test(net, crecords):
+def eye_test(nlp, net, crecords):
+    from experiments.ontology.ont_encoder import crecord2spans
     test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
     for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
         print()
@@ -158,51 +162,58 @@ def eye_test(net, crecords):
             print('{:2d} {:.2f} {} {}'.format(icls, prob, direction, rel))
 
 
-if __name__ == "__main__":
-    # np.random.seed(2)
+def main():
+    import os
+    from experiments.ontology.symbols import RC_CLASSES_MAP
+    from experiments.data_utils import unpickle, split, visualise
+    from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderWithEntTypes, EncoderDataAugmenter
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
-    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_rc_data_old
-    from experiments.ontology.ont_encoder import crecord2spans
+    # todo: load trained NER
+    from experiments.ontology.data import nlp, load_rc_data
 
-    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-
+    np.random.seed(2)
     batch_size = 1
-    prop_case = 'test.balanced0.'
-    model_name = prop_case + 'dr.noaug.v3'
-
-    scls_file = classes_dir + 'prop_classes.{}csv'.format(prop_case)
-    sclasses = load_prop_superclass_mapping(scls_file)
-    inv_file = classes_dir + 'prop_inverse.csv'
-    inverse = load_inverse_mapping(inv_file)
-    encoder = DBPediaEncoder(nlp, sclasses)
-    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
-    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    # encoder = EncoderDataAugmenter(encoder, inverse)
-
-    dataset = load_rc_data_old(sclasses, shuffle=True)
-    train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
-    log.info('total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
     epochs = 6
+    model_name = 'noner.dr.noaug.v4'
+    sclasses = RC_CLASSES_MAP
+    # inverse = RC_INVERSE_MAP
+    data_dir = '/home/user/datasets/dbpedia/'
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+
+    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.5, shuffle=True)
+    assert(all(rr is not None for rr in dataset))
+    train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
+    log.info('data: total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
+    # encoder = EncoderDataAugmenter(encoder, inverse)
+    # encoder = DBPediaEncoder(nlp, sclasses)
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
+    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
+    assert(len(encoder.vector_length) == encoder.channels)
+
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
-    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
+    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('model: {}; epochs: {}'.format(model_name, epochs))
     net._model.summary(line_length=80)
-
-    # eye_test(net, val_data)
+    # eye_test(nlp, net, val_data)
 
     net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
     log.info('end training')
 
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print(evals)
-    # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases
+    # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases  # for old data
 
 
+if __name__ == "__main__":
+    from experiments.ontology.data import RelationRecord  # for unpickle()
+    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+    main()

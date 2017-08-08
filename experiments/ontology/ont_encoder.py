@@ -1,6 +1,4 @@
 import logging as log
-import re
-from copy import copy
 from collections import defaultdict
 
 import numpy as np
@@ -14,26 +12,6 @@ def transform_lists(text):
     rex = '^- +'  # todo: why it doesn't work?
     # group all subsequent '-' lines; make from them comma-list
     # using previous Section name or previous sentence (especially if it ends on colon)
-
-
-def filter_context(crecord):
-    """Only chooses the sentence where the entities (subject and object) are present.
-    Does not yield other sentences. Returns original crecord if it is valid."""
-    ctext = crecord.context
-    rex = '\n+'
-    matches = [m.span() for m in re.finditer(rex, ctext)]
-    ends, starts = zip(*matches) if len(matches) != 0 else ([], [])
-    starts = [0] + list(starts)
-    ends = list(ends) + [len(ctext)]
-    spans = [(a, b) for a, b in zip(starts, ends) if a < b]
-    if crecord.valid_offsets:  # just in case
-        itree = IntervalTree.from_tuples(spans)
-        ssent = itree[crecord.s_startr:crecord.s_endr]
-        if ssent == itree[crecord.o_startr:crecord.o_endr]:
-            p = ssent.pop()
-            cr = copy(crecord)
-            cr.cut_context(p.begin, p.end)
-            return cr
 
 
 def crecord2spans(crecord, nlp):
@@ -57,6 +35,7 @@ class DBPediaEncoder:
         self.classes = superclass_map
         # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
         self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
+        self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
         self.iob_tags = CategoricalTags(IOB_TAGS)
         self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(POS_TAGS)
@@ -131,7 +110,8 @@ class DBPediaEncoder:
         """
         raw_cls = self.classes.get(crecord.r)
         cls = self.tags.encode(raw_cls)
-        return np.array(cls), int(crecord.direction)
+        direction = self.direction_tags.encode(crecord.direction)
+        return np.array(cls), direction
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
@@ -150,6 +130,12 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
         return self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
 
     @property
+    def vector_length(self):
+        _vl = super().vector_length
+        _l = len(self._ent_tags)
+        return (*_vl, _l, _l)
+
+    @property
     def channels(self):
         return super().channels + 2
 
@@ -162,14 +148,21 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
-        data = super().encode_data(s_span, o_span)  # do not use data linking (hence, super()), use info from crecord instead
+        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
+        data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
-        s_type = self._encode_type(crecord.subject)
-        o_type = self._encode_type(crecord.object)
-        yield (*data, s_type, o_type, *cls)
+        # todo: think about feeding on each timestep
+        s_type = [self._encode_type(crecord.subject)] * len(self.last_sdp)  # feeding type on each timestep
+        o_type = [self._encode_type(crecord.object)] * len(self.last_sdp)  # feeding type on each timestep
+        yield (*data, np.array(s_type), np.array(o_type), *cls)
 
 
 class DBPediaEncoderBranched(DBPediaEncoder):
+    @property
+    def vector_length(self):
+        _vl = super().vector_length
+        return (*_vl, *_vl)
+
     @property
     def channels(self):
         return super().channels * 2
@@ -231,20 +224,25 @@ def find_simmetric(dataset):
 
 
 if __name__ == "__main__":
-    from experiments.ontology.data import nlp, classes_dir, load_prop_superclass_mapping, load_inverse_mapping, load_rc_data_old
+    import os
+    from experiments.ontology.data import nlp, load_rc_data
+    from experiments.ontology.data import RelationRecord  # for unpickle()
+    from experiments.ontology.symbols import RC_CLASSES_MAP
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    # scls_file = classes_dir + 'prop_classes.csv'
-    # inv_file = classes_dir + 'prop_inverse.csv'
-    sclasses = load_prop_superclass_mapping()
-    inverse = load_inverse_mapping()
-    dataset = load_rc_data_old(sclasses, shuffle=False)
-    encoder = DBPediaEncoder(nlp, sclasses, inverse)
-    c = encoder.channels
+    sclasses = RC_CLASSES_MAP
+    data_dir = '/home/user/datasets/dbpedia/'
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
 
-    find_simmetric(dataset)
-    exit()
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
+    c = encoder.channels
+    assert(len(encoder.vector_length) == encoder.channels)
+
+    # find_simmetric(dataset)
+    # exit()
 
     for i, cr in enumerate(dataset):
         for data in encoder.encode(cr):
