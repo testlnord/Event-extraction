@@ -86,13 +86,20 @@ def chars2spans(doc, *char_offsets_pairs):
     #     i = charmap[p].pop()
     #     return i.data + int(p != i.begin)  # handle edge case when point falls into the previous interval
     # return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
-    def ii(p): return charmap[p].pop().data  # help function for convenience
+    def ii(p):
+        _res = charmap[p]  # help function for convenience
+        if _res:
+            return _res.pop().data
+
     slices = []
     for a, b in char_offsets_pairs:
         ia = ii(a)
         ib = ii(b)
-        ib += int(ib == ia)  # handle edge case when point falls into the previous interval which results in empty span
-        slices.append(doc[ia:ib])
+        if ia is not None and ib is not None:
+            ib += int(ib == ia)  # handle edge case when point falls into the previous interval which results in empty span
+            slices.append(doc[ia:ib])
+        else:
+            log.warning('chars2spans: span ({}, {}) is not in the IntervalTree: {}'.format(a, b, charmap.all_intervals))
     return slices
 
 
