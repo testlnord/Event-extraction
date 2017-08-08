@@ -103,6 +103,7 @@ class NERTypeResolver:
     final_classes_names = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
 
     def __init__(self, raw_classes=tuple()):
+        assert(all(isinstance(x, URIRef) for x in raw_classes))
         self.superclasses_map = self.get_superclasses_map(raw_classes)
 
     def get_by_uri(self, uri, default_type=None):
@@ -110,7 +111,7 @@ class NERTypeResolver:
         final_type_uri = self.superclasses_map.get(type_uri, self.get_final_class(type_uri))  # try to get the type from buffer
         if final_type_uri is not None:
             self.superclasses_map[type_uri] = final_type_uri  # add type to buffer (or do nothing useful if it is already there)
-            default_type = self.final_classes_names[final_type_uri]
+            return self.final_classes_names[final_type_uri]
         return default_type
 
     def get_final_class(self, cls):
