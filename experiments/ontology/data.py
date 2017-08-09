@@ -56,12 +56,13 @@ class RelationRecord:
 
     def cut_context(self, begin, end):
         self.context = self.context[begin:end]
-        self.cstart = self.cstart + begin
         self.cend = self.cstart + end
+        self.cstart = self.cstart + begin
         self.s0 = self.s_start = max(self.cstart, self.s0)
         self.s1 = self.s_end = min(self.s1, self.cend)
         self.o0 = self.o_start = max(self.cstart, self.o0)
         self.o1 = self.o_end = min(self.o1, self.cend)
+        assert self.valid_offsets
 
     @property
     def direction(self):
@@ -73,8 +74,9 @@ class RelationRecord:
 
     @property
     def valid_offsets(self):
-        return (self.s_start < self.s_end) and (self.o_start < self.o_end) and \
-               (self.cstart < self.cend) and (self.s_spanr != self.o_spanr)
+        return (self.cstart <= self.s_start < self.s_end <= self.cend) and \
+               (self.cstart <= self.o_start < self.o_end <= self.cend) and \
+               (self.s_start != self.o_start or self.s_end != self.o_end)
 
     @property
     def triple(self): return (self.subject, self.relation, self.object)
@@ -156,8 +158,8 @@ class ContextRecord:
 
     def cut_context(self, begin, end):
         self.context = self.context[begin:end]
-        self.start = self.start + begin
         self.end = self.start + end
+        self.start = self.start + begin
         for e in self.ents:
             e.cut_context(begin, end)
 
@@ -183,14 +185,14 @@ def filter_context(crecord):
     starts = [0] + list(starts)
     ends = list(ends) + [len(ctext)]
     spans = [(a, b) for a, b in zip(starts, ends) if a < b]
-    if crecord.valid_offsets:  # just in case
-        itree = IntervalTree.from_tuples(spans)
-        ssent = itree[crecord.s_startr:crecord.s_endr]
-        if ssent == itree[crecord.o_startr:crecord.o_endr]:
-            p = ssent.pop()
-            cr = copy(crecord)
-            cr.cut_context(p.begin, p.end)
-            return cr
+
+    itree = IntervalTree.from_tuples(spans)
+    ssent = itree[crecord.s_startr:crecord.s_endr]
+    if ssent == itree[crecord.o_startr:crecord.o_endr]:
+        p = ssent.pop()
+        cr = copy(crecord)
+        cr.cut_context(p.begin, p.end)
+        return cr
 
 
 def filter_contexts(crecords):
@@ -258,9 +260,10 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=Tr
     :return: List[RelationRecord]
     """
     _classes = set(allowed_classes)
-    rc = list(filter(None, [filter_context(rr) for rr in unpickle(rc_file) if str(rr.relation) in _classes]))
+    _frc = [filter_context(rr) for rr in unpickle(rc_file) if rr.valid_offsets and str(rr.relation) in _classes]
+    rc = list(filter(None, _frc))
     nb_neg = int(len(rc) * neg_ratio)
-    rc_neg = list(islice(filter(None, (filter_context(rr) for rr in unpickle(rc_neg_file))), nb_neg))
+    rc_neg = islice(filter(None, (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets)), nb_neg)
     rc.extend(rc_neg)
     if shuffle: random.shuffle(rc)
     return rc
@@ -296,7 +299,6 @@ def merge_ents_offsets(primal_ents, other_ents):
     return ents_filtered
 
 
-# todo: need to filter repeated relations?
 def resolve_relations(art_id, doc, ents_all, graph=gdb):
     """
 
