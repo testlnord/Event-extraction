@@ -74,6 +74,12 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
 
 
 def chars2spans(doc, *char_offsets_pairs):
+    """
+    Transform char offsets pairs to spans in doc. Return None if
+    :param doc:
+    :param char_offsets_pairs:
+    :return: List[spacy.token.Span] or None
+    """
     l = len(doc)-1
     lt = len(doc.text)+1
     charmap = IntervalTree(Interval(doc[i].idx, doc[i+1].idx, i) for i in range(l))
@@ -82,10 +88,6 @@ def chars2spans(doc, *char_offsets_pairs):
     # tmp = [(t.idx, t.i) for t in doc]
     # charmap = dict([(i, ti) for k, (idx, ti) in enumerate(tmp[:-1]) for i in range(idx, tmp[k+1][0])])
 
-    # def ii(p):
-    #     i = charmap[p].pop()
-    #     return i.data + int(p != i.begin)  # handle edge case when point falls into the previous interval
-    # return [doc[ii(a):ii(b)] for a, b in char_offsets_pairs]
     def ii(p):
         _res = charmap[p]  # help function for convenience
         if _res:
@@ -100,6 +102,7 @@ def chars2spans(doc, *char_offsets_pairs):
             slices.append(doc[ia:ib])
         else:
             log.warning('chars2spans: span ({}, {}) is not in the IntervalTree: {}'.format(a, b, charmap.all_intervals))
+            return None  # fail if any of the spans fails
     return slices
 
 

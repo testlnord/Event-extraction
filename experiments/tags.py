@@ -68,13 +68,17 @@ def categorical_tags_tests():
     assert(tags2._default_tag_index is None)
 
     assert(tags1.encode('zero') == tags2.encode('zero'))
-    assert(len(tags1) == len(tags2) == 1)
     assert(tags1.encode('zero') == tags1['zero'])
 
     assert(tags2.encode('zero') == 0)
     assert(tags2.decode(0) == 'zero')
     assert(tags1.encode('zero') == 0)
     assert(tags1.decode(0) == 'None')
+
+    assert(len(tags1) == len(tags2) == 1)
+    tags3 = CategoricalTags(('one', 'two', 'three'))
+    tags4 = CategoricalTags(('one', 'two'), 'None')
+    assert(len(tags3) == len(tags4) == 3)
 
 
 if __name__ == "__main__":
