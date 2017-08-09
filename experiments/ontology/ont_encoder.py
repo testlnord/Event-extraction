@@ -1,4 +1,5 @@
 import logging as log
+from itertools import product
 from collections import defaultdict
 
 import numpy as np
@@ -34,8 +35,12 @@ class DBPediaEncoder:
         self.nlp = nlp
         self.classes = superclass_map
         # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
-        self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
-        self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
+        # self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
+        # self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
+        raw_classes = list(product(set(self.classes.values()), [True, False]))
+        log.info('DBPediaEncoder: classes: {}'.format(raw_classes))
+        self.tags = CategoricalTags(raw_classes, default_tag='-')
+
         self.iob_tags = CategoricalTags(IOB_TAGS)
         self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(POS_TAGS)
@@ -108,10 +113,12 @@ class DBPediaEncoder:
         :param r: relation (of type: str)
         :return: tuple of (one-hot vector of categories, direction of the s->o relation)
         """
-        raw_cls = self.classes.get(crecord.r)
-        cls = self.tags.encode(raw_cls)
-        direction = self.direction_tags.encode(crecord.direction)
-        return np.array(cls), direction
+        raw_cls = self.classes.get(str(crecord.r))
+        # NB: raw_cls may be None (filtered by self.classes), but still have specified direction, so we get (None, True) or (None, False)
+        cls = self.tags.encode((raw_cls, crecord.direction))
+        return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode()
+        # direction = self.direction_tags.encode(crecord.direction)
+        # return np.array(cls), direction
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
@@ -225,8 +232,9 @@ def find_simmetric(dataset):
 
 if __name__ == "__main__":
     import os
-    from experiments.ontology.data import nlp, load_rc_data
+    from experiments.ontology.data import nlp, load_rc_data, filter_context
     from experiments.ontology.data import RelationRecord  # for unpickle()
+    from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
@@ -236,27 +244,47 @@ if __name__ == "__main__":
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
+    print('total with filtered classes:', len(dataset))
 
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
     c = encoder.channels
-    assert(len(encoder.vector_length) == encoder.channels)
+    assert len(encoder.vector_length) == encoder.channels
 
     # find_simmetric(dataset)
     # exit()
 
-    for i, cr in enumerate(dataset):
-        for data in encoder.encode(cr):
-            data, clss = data[:c], data[c:]
-            print()
-            print(i, cr.triple)
+    dataset = list(unpickle(rc_out))
+    _nonvalid = [rr for rr in dataset if not rr.valid_offsets]
+    print('TOTAL:', len(dataset))
+    print('BAD:', len(_nonvalid))
+    _valid = [rr for rr in dataset if rr.valid_offsets]
+    _fc = list(filter(None, map(filter_context, _valid)))
+    print('VALID:', len(_valid), 'VALID FILTERED:', len(_fc))
 
-            sdp = encoder.last_sdp
-            s2 = expand_ents(sdp)
-            s3 = expand_ents(sdp, True)
-            print(sdp)
-            if len(sdp) != len(s2):
-                print(s2)
-                print(s3)
-            # for tok, iob, pos, dep, vec in zip(sdp, *data):
-            #     print(tok.text.ljust(20), tok.pos_.ljust(10), tok.dep_.ljust(10))
+    bad = 0
+    for i, cr in enumerate(_valid):
+        # final_rel = sclasses.get(str(cr.relation))
+        final_rel = sclasses.get(cr.relation)
+        true_tag = (final_rel, cr.direction)
+        print(cr.triple, true_tag)
+        # assert encoder.tags.decode(encoder.tags.encode(true_tag)) == true_tag
+        spans = crecord2spans(cr, nlp)
+        if not spans:
+            bad += 1
+    print('BAD_C2S in _valid:', bad)  # should be zero
 
+
+        # for data in encoder.encode(cr):
+        #     data, clss = data[:c], data[c:]
+        #     print()
+        #     print(i, cr.triple)
+        #
+        #     sdp = encoder.last_sdp
+        #     s2 = expand_ents(sdp)
+        #     s3 = expand_ents(sdp, True)
+        #     print(sdp)
+        #     if len(sdp) != len(s2):
+        #         print(s2)
+        #         print(s3)
+        #     for tok, iob, pos, dep, vec in zip(sdp, *data):
+        #         print(tok.text.ljust(20), tok.pos_.ljust(10), tok.dep_.ljust(10))

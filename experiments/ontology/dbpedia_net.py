@@ -56,17 +56,15 @@ class DBPediaNet(SequenceNet):
 
         # Multiple outputs
         # todo: abstract num classes (i.e. num of direction classes (not binary, but categorical crossentropy))
-        direction_output = Dense(3, activation='sigmoid', name='direction_output')(last)
-
-        self._model = Model(inputs=inputs, outputs=[output, direction_output])
-        self._model.compile(optimizer='adam',
-                            loss={'output': 'categorical_crossentropy', 'direction_output': 'categorical_crossentropy'},
-                            loss_weights={'output': 1, 'direction_output': 1})
+        # direction_output = Dense(3, activation='sigmoid', name='direction_output')(last)
+        # self._model = Model(inputs=inputs, outputs=[output, direction_output])
+        # self._model.compile(optimizer='adam',
+        #                     loss={'output': 'categorical_crossentropy', 'direction_output': 'categorical_crossentropy'},
+        #                     loss_weights={'output': 1, 'direction_output': 10})
 
         # Single output
-        # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
-        # self._model = Model(inputs=inputs, outputs=[output])
-        # self._model.compile(loss='categorical_crossentropy', optimizer='adam')
+        self._model = Model(inputs=inputs, outputs=[output])
+        self._model.compile(loss='categorical_crossentropy', optimizer='adam')
 
     def compile4(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
         """Compile 2 subnetworks (for two branches of shprtest dependency path)"""
@@ -118,13 +116,46 @@ class DBPediaNet(SequenceNet):
     def _make_data_gen(self, data_gen):
         # data_gen = self.padder(xy for data in data_gen for xy in self._encoder.encode(data))
         data_gen = self._encoder(data_gen)
-        c = self._encoder.channels
-        # todo: if len(arr[c:]) == 1 then use arr[c] ??? is it necessary
+        c = self._encoder.channels  # so, arr[:c] is the inputs and the arr[c:] is the output(s)
         res = ((arr[:c], arr[c:]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and outputs (classes)
         return res
 
+    def predict(self, subject_object_spans_pairs, topn=1):
+        encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
+        preds = []
+        for batch in self.batcher.batch_transposed(encoded):
+            preds_batch = self._model.predict_on_batch(batch)
+            preds.extend(preds_batch)
+        all_tops = []
+        decode = self._encoder.tags.decode
+        for pred in preds:
+            top_inds = np.argsort(-pred)[:topn]
+            probs = pred[top_inds]
+            classes = [decode(ind) for ind in top_inds]
+            tops = list(zip(top_inds, probs, classes))
+            all_tops.append(tops)
+        return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
+
+    # temporary method for testing
+    def predict_crecords(self, crecords, topn=1):
+        c = self._encoder.channels
+        encoded = [arr[:c] for cr in crecords for arr in self._encoder.encode(cr)]  # throwing out the true class
+        preds = []
+        for batch in self.batcher.batch_transposed(encoded):
+            preds_batch = self._model.predict_on_batch(batch)
+            preds.extend(preds_batch)
+        all_tops = []
+        decode = self._encoder.tags.decode
+        for pred in preds:
+            top_inds = np.argsort(-pred)[:topn]
+            probs = pred[top_inds]
+            classes = [decode(ind) for ind in top_inds]
+            tops = list(zip(top_inds, probs, classes))
+            all_tops.append(tops)
+        return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
+
     # this method is specific for output of form [categorical, binary]
-    def predict(self, subject_object_spans_pairs, topn=1, direction_threshold=0.5):
+    def predict_dir(self, subject_object_spans_pairs, topn=1, direction_threshold=0.5):
         encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
         preds = []
         directions = []
@@ -134,7 +165,6 @@ class DBPediaNet(SequenceNet):
             directions.extend(directions_batch)
         all_tops = []
         decode = self._encoder.tags.decode
-        dirdecode = self._encoder.direction_tags.decode
         for pred, direction in zip(preds, directions):  # todo: check for multiple outputs
             # todo: decode dir classes (arg_max etc.)
             # direction = int(direction[0] >= direction_threshold)
@@ -148,18 +178,21 @@ class DBPediaNet(SequenceNet):
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
 
-def eye_test(nlp, net, crecords):
-    from experiments.ontology.ont_encoder import crecord2spans
-    test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
-    for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
+def eye_test(nlp, net, crecords, sclasses_map):
+    test_data = crecords  # temporary for testing
+    for tops, crecord in zip(net.predict_crecords(test_data, topn=3), crecords):
+    # from experiments.ontology.ont_encoder import crecord2spans
+    # test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
+    # for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
         print()
         print(crecord.context)
-        true_dir = int(crecord.s_end <= crecord.o_start)
         _ = list(net._encoder.encode(crecord))  # to get the sdp
         print(net._encoder.last_sdp)
-        print(true_dir, crecord.triple)
-        for icls, prob, rel, direction in tops:
-            print('{:2d} {:.2f} {} {}'.format(icls, prob, direction, rel))
+        print(str(crecord.subject), (str(crecord.relation), crecord.direction), str(crecord.object))
+        true_rel = sclasses_map.get(str(crecord.relation))
+        print((true_rel, crecord.direction))
+        for icls, prob, rel_with_dir in tops:
+            print('{:2d} {:.2f} {}'.format(icls, prob, rel_with_dir))
 
 
 def main():
@@ -175,18 +208,20 @@ def main():
 
     np.random.seed(2)
     batch_size = 1
-    epochs = 6
+    epochs = 2
     model_name = 'noner.dr.noaug.v4'
     sclasses = RC_CLASSES_MAP
     # inverse = RC_INVERSE_MAP
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True)
 
-    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.5, shuffle=True)
-    assert(all(rr is not None for rr in dataset))
+    assert all(rr is not None for rr in dataset)
+    # dataset = dataset[:5000]
     train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
-    log.info('data: total: {}; train: {}; val: {}'.format(len(dataset), len(train_data), len(val_data)))
+    nb_negs = len([rr.r for rr in dataset if not rr.r])
+    log.info('data: total: {} (negatives: {}); train: {}; val: {}'.format(len(dataset), nb_negs, len(train_data), len(val_data)))
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
 
@@ -194,17 +229,17 @@ def main():
     # encoder = DBPediaEncoder(nlp, sclasses)
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
     # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    assert(len(encoder.vector_length) == encoder.channels)
+    assert len(encoder.vector_length) == encoder.channels
 
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
-    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
+    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 0)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
-    log.info('model: {}; epochs: {}'.format(model_name, epochs))
+    log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
-    # eye_test(nlp, net, val_data)
 
+    # eye_test(nlp, net, val_data)
     net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
     log.info('end training')
 
