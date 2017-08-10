@@ -51,18 +51,14 @@ gfall = ReadOnlyGraphAggregate([gf, gmore])
 # Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
 @except_safe(EndPointNotFound, HTTPError)
 def get_article(subject):
-    """Fail-safe, when article is not present."""
+    """Fail-safe when article is not present."""
     try:
         id_uri = next(gdb.objects(subject=subject, predicate=dbo.wikiPageID))
     except StopIteration:
         return None
     try:
         with open(dir_articles + id_uri) as f:
-            art = json.load(f)
-        text = art['text']
-        first_par = text.find('\n\n')  # cut the title
-        art['text'] = text[first_par+2:]
-        return art
+            return json.load(f)
     except FileNotFoundError:
         return None
 
@@ -107,7 +103,9 @@ class NERTypeResolver:
         self.superclasses_map = self.get_superclasses_map(raw_classes)
 
     def get_by_uri(self, uri, default_type=None):
-        type_uri = get_type(uri)
+        return self.get_by_type_uri(get_type(uri), default_type)
+
+    def get_by_type_uri(self, type_uri, default_type=None):
         final_type_uri = self.superclasses_map.get(type_uri, self.get_final_class(type_uri))  # try to get the type from buffer
         if final_type_uri is not None:
             self.superclasses_map[type_uri] = final_type_uri  # add type to buffer (or do nothing useful if it is already there)
