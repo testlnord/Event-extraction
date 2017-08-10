@@ -178,21 +178,27 @@ class DBPediaNet(SequenceNet):
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
 
-def eye_test(nlp, net, crecords, sclasses_map):
-    test_data = crecords  # temporary for testing
-    for tops, crecord in zip(net.predict_crecords(test_data, topn=3), crecords):
+def eye_test(nlp, net, crecords, sclasses_map, prob_threshold=0.8):
+    nb_rights = 0
+
     # from experiments.ontology.ont_encoder import crecord2spans
     # test_data = [crecord2spans(crecord, nlp) for crecord in crecords]
     # for tops, crecord in zip(net.predict(test_data, topn=3), crecords):
+    test_data = crecords  # temporary for testing
+    for tops, crecord in zip(net.predict_crecords(test_data, topn=3), crecords):
+
         print()
         print(crecord.context)
         _ = list(net._encoder.encode(crecord))  # to get the sdp
         print(net._encoder.last_sdp)
         print(str(crecord.subject), (str(crecord.relation), crecord.direction), str(crecord.object))
         true_rel = sclasses_map.get(str(crecord.relation))
-        print((true_rel, crecord.direction))
+        true_rel_with_dir = (true_rel, crecord.direction)
+        print('------>', true_rel_with_dir)
         for icls, prob, rel_with_dir in tops:
+            nb_rights += int(prob >= prob_threshold and true_rel_with_dir == rel_with_dir)
             print('{:2d} {:.2f} {}'.format(icls, prob, rel_with_dir))
+    return nb_rights
 
 
 def main():
@@ -231,20 +237,25 @@ def main():
     # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
     assert len(encoder.vector_length) == encoder.channels
 
-    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile2()
-    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 0)
-    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    # net.compile2()
+    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 1)
+    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
 
-    # eye_test(nlp, net, val_data)
-    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-    log.info('end training')
+    prob_threshold = 0.8
+    nb_rights = eye_test(nlp, net, dataset, sclasses, prob_threshold=prob_threshold)
+    print('total: {}; rights: {} (with probability threshold: {})'.format(len(dataset), nb_rights, prob_threshold))
 
+    # eye_test(nlp, net, val_data, sclasses)
     # evals = net.evaluate(cycle(val_data), val_steps)
-    # print(evals)
+    # print('Evaluated:', evals)
+
+    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    # log.info('end training')
+
     # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases  # for old data
 
 

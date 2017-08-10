@@ -76,7 +76,7 @@ class RelationRecord:
     def valid_offsets(self):
         return (self.cstart <= self.s_start < self.s_end <= self.cend) and \
                (self.cstart <= self.o_start < self.o_end <= self.cend) and \
-               (self.s_start != self.o_start or self.s_end != self.o_end)
+               disjoint(self.s_span, self.o_span)
 
     @property
     def triple(self): return (self.subject, self.relation, self.object)
@@ -92,6 +92,12 @@ class RelationRecord:
 
     @property
     def o_endr(self): return self.o_end - self.cstart
+
+    @property
+    def s_span(self): return (self.s_start, self.s_end)
+
+    @property
+    def o_span(self): return (self.o_start, self.o_end)
 
     @property
     def s_spanr(self): return (self.s_startr, self.s_endr)
@@ -173,6 +179,10 @@ class ContextRecord:
     def __str__(self):
         return self.context.strip() + '(' + '; '.join(str(e) for e in self.ents) + ')'
 
+
+
+def disjoint(span1, span2):
+    return not Interval(*span1).overlaps(*span2)
 
 
 def filter_context(crecord):
@@ -262,6 +272,7 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=Tr
     _classes = set(allowed_classes)
     _frc = [filter_context(rr) for rr in unpickle(rc_file) if rr.valid_offsets and str(rr.relation) in _classes]
     rc = list(filter(None, _frc))
+    # rc = [rr for rr in _frc if rr is not None and rr.subject != rr.object]  # same subject and object sometimes happen
     nb_neg = int(len(rc) * neg_ratio)
     rc_neg = islice(filter(None, (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets)), nb_neg)
     rc.extend(rc_neg)
