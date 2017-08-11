@@ -1,3 +1,5 @@
+import logging as log
+import sys
 import os
 from enum import Enum, IntEnum
 import pickle
@@ -5,7 +7,7 @@ import json
 import curses
 from curses import wrapper
 
-from cytoolz import groupby, second
+from cytoolz import groupby, first, second, sliding_window
 
 
 class BinChoice(Enum):
@@ -66,47 +68,53 @@ class ManualTagger:
 
         try:
             wrapper(self._run)
+        except KeyboardInterrupt:
+            log.info('Received KeyboardInterrupt; exiting.')
         finally:
-            curses.nocbreak()
-            curses.echo()
             curses.endwin()
 
     def _run(self, stdscr):
-        curses.noecho()
-        curses.cbreak()
         curses.curs_set(False)
 
-        x = 0
-        y = 4
+        # wy = 3
+        # wx = 1
+        # win = stdscr.derwin(wy, wx)
+        win = stdscr
+        y = 2
+        x = 1
         self._schoices = list(map(str, self.choices))
         _pad = max(map(len, self._schoices)) + 2
 
         while True:
-            stdscr.clear()
+            try:
+                win.clear()
 
-            # Initial choice
-            # todo: it tags first record in any way
-            if self.idefault_choice is not None and self.processed[self.state] is None:
-                self.processed[self.state] = self.idefault_choice
+                # Initial choice
+                # todo: it tags first record in any way
+                if self.idefault_choice is not None and self.processed[self.state] is None:
+                    self.processed[self.state] = self.idefault_choice
 
-            # Print state and statusline
-            stdscr.addstr(y, x, '{}/{} {}'.format(self.state + 1, self._ndata, self._statusline))
-            # Set styles for choices
-            astyles = [curses.A_NORMAL] * len(self.choices)
-            astyles[self._cursor] |= curses.A_UNDERLINE
-            # Highlight actual choice
-            ichoice = self.processed[self.state]
-            if ichoice is not None:
-                astyles[ichoice] |= curses.A_BOLD
-            # Print choices
-            for i, (sch, astyle) in enumerate(zip(self._schoices, astyles)):
-                stdscr.addstr(y+1, x + _pad*i, sch, astyle)  # moving cursor
-            # Print record
-            self.printer(stdscr, y+3, x, self.data[self.state])
+                # Print state and statusline
+                win.addstr(y, x, '{}/{} {}'.format(self.state + 1, self._ndata, self._statusline))
+                # Set styles for choices
+                astyles = [curses.A_NORMAL] * len(self.choices)
+                astyles[self._cursor] |= curses.A_UNDERLINE
+                # Highlight actual choice
+                ichoice = self.processed[self.state]
+                if ichoice is not None:
+                    astyles[ichoice] |= curses.A_BOLD
+                # Print choices
+                for i, (sch, astyle) in enumerate(zip(self._schoices, astyles)):
+                    win.addstr(y + 1, x + _pad * i, sch, astyle)  # moving cursor
+                # Print record
+                self.printer(win, y + 3, x, self.data[self.state])
 
-            stdscr.refresh()
-            # self._statusline = ''
-            c = stdscr.getch()
+                win.refresh()
+                # self._statusline = ''
+            except curses.error:  # some meaningless error
+                pass
+
+            c = win.getch()
             if c == KeyMap.NEXT:
                 self._cursor = self.default_cursor_pos
                 self.state = min(self.state + 1, self._ndata - 1)
@@ -120,7 +128,6 @@ class ManualTagger:
             elif c == KeyMap.PREV_CHOICE:
                 self._cursor = (self._cursor - 1) % self._nch if self._cursor > 0 else self._nch-1
             elif c == KeyMap.SAVE:
-                stdscr.addstr(y+6, x, 'SAVED')
                 self.save()
                 self._statusline = 'saved {}'.format(self.state + 1)
             elif c == KeyMap.SAVE_AND_CLOSE:
@@ -147,20 +154,27 @@ class ManualTagger:
                     pickle.dump(record, f)
 
 
-def rrecord_printer(stdscr, y, x, record):
-    triple_str = '<{}> <{}> <{}>'.format(*record.triple)
-
-    text = record.context
-    xs = record.s_startr
-    xo = record.o_startr
-    s = text[xs:record.s_endr]
-    o = text[xo:record.o_endr]
+def rrecord_printer(win, y, x, record):
+    # triple_str = '<{}> <{}> <{}>'.format(*map(raw, record.triple))
+    # stdscr.addstr(y+0, x, triple_str)
+    win.addstr(y + 0, x, 'relation: <{}>'.format(raw(record.relation)))
+    win.addstr(y + 1, x, ' subject: <{}>'.format(raw(record.subject)))
+    win.addstr(y + 2, x, '  object: <{}>'.format(raw(record.object)))
 
     ent_style = curses.A_BOLD
-    stdscr.addstr(y, x, triple_str)
-    stdscr.addstr(y+1, x, text)
-    stdscr.addstr(y+1, xs, s, ent_style)
-    stdscr.addstr(y+1, xo, o, ent_style)
+    text = record.context
+    a1 = record.s_startr
+    b1 = record.s_endr
+    a2 = record.o_startr
+    b2 = record.o_endr
+    if a1 > a2:
+        a1, b1, a2, b2 = a2, b2, a1, b1  # swap
+    win.move(y + 4, x)
+    win.addstr(text[:a1])
+    win.addstr(text[a1:b1], ent_style)
+    win.addstr(text[b1:a2])
+    win.addstr(text[a2:b2], ent_style)
+    win.addstr(text[b2:])
 
 
 def tag_crecords(output_dir):
@@ -181,10 +195,15 @@ def tag_crecords(output_dir):
     tagger.run(sorted_dataset)
 
 
-def main(output_dir):
+def raw(uri):
+    return uri.rsplit('/', 1)[-1]
+
+
+def main():
+    output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'
     choices = [BinChoice.NO.value, BinChoice.YES.value]
-    # tagger = ManualTagger(output_dir, choices, idefault_choice=1, state=0)
-    tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=-1)
+    tagger = ManualTagger(output_dir, choices, idefault_choice=1, state=0)
+    # tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=-1)
 
     dummy_data = [
         'First string',
@@ -200,12 +219,12 @@ def main(output_dir):
 
 
 if __name__ == "__main__":
-    # import sys
-    # cdir = os.path.join(os.path.dirname(__file__), '..', '..')
-    # sys.path.append(cdir)
-    # from experiments.ontology.data import RelationRecord  # for unpickle()
+    cdir = os.path.join(os.path.dirname(__file__), '..', '..')
+    sys.path.append(cdir)
+    # todo: move classes to separate file to avoid evaluation of files
+    from experiments.ontology.data_structs import RelationRecord
 
     output_dir = '/home/user/datasets/dbpedia/rc/tagged/'
-    # tag_crecords(output_dir)
-
-    main(output_dir)
+    tag_crecords(output_dir)
+    #
+    # main(output_dir)
