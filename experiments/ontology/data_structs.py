@@ -31,6 +31,17 @@ class RelationRecord:
         self.o1 = self.o_end = min(self.o1, self.cend)
         assert self.valid_offsets
 
+    def __hash__(self):
+        return hash(self.id())
+
+    def __eq__(self, other):
+        return self.id == other.id
+
+    # todo:
+    def id(self):
+        return (self.article_id, (self.cstart, self.cend),
+                self.s_span, self.o_span, self.triple)
+
     @property
     def direction(self):
         """
