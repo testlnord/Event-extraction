@@ -1,28 +1,27 @@
+import csv
 import logging as log
 import os
-import csv
 import pickle
 import random
 import re
-from copy import copy
 from collections import defaultdict, namedtuple
+from copy import copy
 from itertools import permutations, islice
 from multiprocessing import Pool
 
+import spacy
+from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 from cytoolz import groupby
 from fuzzywuzzy import fuzz
-from intervaltree import IntervalTree, Interval
-from rdflib import URIRef
-from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
+from intervaltree import IntervalTree
 
-from experiments.ontology.sub_ont import dbo, dbr, gdb
-from experiments.ontology.sub_ont import gf, gfall, gdb, gdbo
-from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import NERTypeResolver
 from experiments.data_utils import unpickle
+from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord
+from experiments.ontology.sub_ont import NERTypeResolver
+from experiments.ontology.sub_ont import dbo, dbr
+from experiments.ontology.sub_ont import get_article, get_label
+from experiments.ontology.sub_ont import gf, gfall, gdb
 
-# todo: move from globals
-import spacy
 nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # from experiments.utils import load_nlp
 # nlp = load_nlp()
@@ -35,154 +34,8 @@ classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
 superclasses_file = classes_dir + 'classes.map.json'
 
 
-class RelationRecord:
-    def __init__(self, s: URIRef, r: URIRef, o: URIRef,
-                 s0: int, s1: int, o0: int, o1: int,
-                 ctext, cstart, cend, artid):
-        # self.s = self.subject = URIRef(s)
-        # self.r = self.relation = URIRef(r)
-        # self.o = self.object = URIRef(o)
-        self.s = self.subject = s
-        self.r = self.relation = r
-        self.o = self.object = o
-        self.s0 = self.s_start = s0
-        self.s1 = self.s_end = s1
-        self.o0 = self.o_start = o0
-        self.o1 = self.o_end = o1
-        self.context = ctext
-        self.cstart = cstart
-        self.cend = cend
-        self.article_id = artid
-
-    def cut_context(self, begin, end):
-        self.context = self.context[begin:end]
-        self.cend = self.cstart + end
-        self.cstart = self.cstart + begin
-        self.s0 = self.s_start = max(self.cstart, self.s0)
-        self.s1 = self.s_end = min(self.s1, self.cend)
-        self.o0 = self.o_start = max(self.cstart, self.o0)
-        self.o1 = self.o_end = min(self.o1, self.cend)
-        assert self.valid_offsets
-
-    @property
-    def direction(self):
-        """
-        Is direction of relation the same as order of (s, o) in the context.
-        :return: None, True or False
-        """
-        return None if not bool(self.relation) else (self.s_end <= self.o_start)
-
-    @property
-    def valid_offsets(self):
-        return (self.cstart <= self.s_start < self.s_end <= self.cend) and \
-               (self.cstart <= self.o_start < self.o_end <= self.cend) and \
-               disjoint(self.s_span, self.o_span)
-
-    @property
-    def triple(self): return (self.subject, self.relation, self.object)
-
-    @property
-    def s_startr(self): return self.s_start - self.cstart  # offsets in dataset are relative to the whole document, not to the sentence
-
-    @property
-    def s_endr(self): return self.s_end - self.cstart
-
-    @property
-    def o_startr(self): return self.o_start - self.cstart
-
-    @property
-    def o_endr(self): return self.o_end - self.cstart
-
-    @property
-    def s_span(self): return (self.s_start, self.s_end)
-
-    @property
-    def o_span(self): return (self.o_start, self.o_end)
-
-    @property
-    def s_spanr(self): return (self.s_startr, self.s_endr)
-
-    @property
-    def o_spanr(self): return (self.o_startr, self.o_endr)
-
-    def __str__(self):
-        return '\n'.join((' '.join('<{}>'.format(x) for x in self.triple), self.context.strip()))
-
-
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
 
-
-class EntityRecord:
-    def __init__(self, crecord, start, end, uri):
-        """
-
-        :param uri: original uri
-        :param start: char offset of the start in crecord.context (including start)
-        :param end: char offset of the end in crecord.context (not including end)
-        :param crecord: source of entity: ContextRecord
-        """
-        self.crecord = crecord
-        self.start = start
-        self.end = end
-        self.uri = uri
-
-    @property
-    def text(self):
-        return self.crecord.context[slice(*self.span)]
-
-    @property
-    def span(self):
-        return self.start, self.end
-
-    @property
-    def spang(self):
-        s = self.crecord.start
-        return s+self.start, s+self.end
-
-    def cut_context(self, begin, end):
-        self.start = max(0, self.start - begin)
-        self.end = min(self.end, end)
-
-    def json(self):
-        return self.span, self.uri
-
-    def __str__(self):
-        return '[{}:{}] {}'.format(self.start, self.end, self.text.strip())
-
-
-class ContextRecord:
-    @classmethod
-    def from_span(cls, span, artid, ents=None):
-        return cls(span.text, span.start_char, span.end_char, artid, ents)
-
-    def __init__(self, ctext, cstart, cend, artid, ents=None):
-        self.context = ctext
-        self.start = cstart
-        self.end = cend
-        self.article_id = artid
-        self.ents = [] if ents is None else ents
-
-    def cut_context(self, begin, end):
-        self.context = self.context[begin:end]
-        self.end = self.start + end
-        self.start = self.start + begin
-        for e in self.ents:
-            e.cut_context(begin, end)
-
-    @property
-    def span(self):
-        return self.start, self.end
-
-    def json(self):
-        return (self.article_id, self.span, self.context, [e.json for e in self.ents])
-
-    def __str__(self):
-        return self.context.strip() + '(' + '; '.join(str(e) for e in self.ents) + ')'
-
-
-
-def disjoint(span1, span2):
-    return not Interval(*span1).overlaps(*span2)
 
 
 def filter_context(crecord):
@@ -382,7 +235,7 @@ def get_contexts(docs, *ents_uris):
 def run_extraction(inner_graph, outer_graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
     """
     Implements specific policy of extraction (i.e. choice of candidate entities and articles)
-    :param inner_graph: for example, domain-specific graph
+    :param inner_graph: for example -- domain-specific graph
     :param outer_graph: the whole known 'world' to resolve entities from
     :param subject_uris: candidate entities to search for links with them
     :param use_all_articles:
@@ -431,7 +284,9 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner
         total_rels_filtered = 0
         total_ents = 0
         # NB: using outer_graph for the search of objects for subject_uris!
-        for art_id, doc, ents in run_extraction(outer_graph, outer_graph, subject_uris, use_all_articles=False):
+        # graph = outer_graph
+        graph = inner_graph
+        for art_id, doc, ents in run_extraction(graph, outer_graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
             ers = [EntityRecord(cr, *ent) for ent in ents]
             cr.ents = ers
@@ -442,7 +297,7 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner
                 counter[rrel.relation] += 1
                 if not rrel.relation:
                     pickle.dump(rrel, frc0)
-                # todo: make genric filtering function?
+                # todo: make generic filtering function?
                 elif rrel.relation.startswith(dbo):
                     nb_filtered += 1
                     pickle.dump(rrel, frc)
@@ -525,27 +380,14 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
+    # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
 
     data_dir = '/home/user/datasets/dbpedia/'
-    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.full.pck')
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.filtered.pck')
-    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.negative.pck')
-    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.full.other.pck')
-    make_dataset(ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
+    # make_dataset(ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
 
-    # Load classes names
-    # ner_counts = '/home/user/datasets/dbpedia/ner/crecords.v2.counts.json'
-    # with open(ner_counts) as f:
-    #     import json
-    #     classes = [URIRef(x) for x in json.load(f).keys()]
-    # ntr = NERTypeResolver(classes)
-
-    # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
-    # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
-
-    # Try reading the dataset
-    # from experiments.data_utils import unpickle
-    # for i, crecord in enumerate(unpickle(output_file)):
-    #     count = all(isinstance(er.uri, URIRef) for er in crecord.ents)
-    #     print(i, count)
