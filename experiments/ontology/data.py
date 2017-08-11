@@ -22,6 +22,7 @@ from experiments.ontology.sub_ont import dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
 from experiments.ontology.sub_ont import gf, gfall, gdb
 
+
 nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # from experiments.utils import load_nlp
 # nlp = load_nlp()

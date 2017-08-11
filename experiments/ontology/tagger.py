@@ -177,22 +177,44 @@ def rrecord_printer(win, y, x, record):
     win.addstr(text[b2:])
 
 
-def tag_crecords(output_dir):
-    from experiments.ontology.data import load_rc_data
-    from experiments.ontology.symbols import RC_CLASSES_MAP_MORE
+# temporary
+def from_partially_tagged(grouped, dataset, choices):
+    from experiments.ontology.sub_ont import dbo
+    len_author = len(grouped[dbo.author])
+    len_computingPlatform = len(grouped[dbo.computingPlatform])
+    __dir = '/home/user/datasets/dbpedia/rc/tagged/'
+    tagger = ManualTagger.continue_tagging(__dir, choices, idefault_choice=1, data_printer=rrecord_printer)
+    processed = tagger.processed[:min(num_cut, len_author)] + \
+                tagger.processed[len_author:len_author + min(num_cut, len_computingPlatform)]
+    state = len(processed) - 1
+    processed += [None] * (len(dataset) - len(processed))
+    return state, processed
 
-    sclasses = RC_CLASSES_MAP_MORE
+
+def tag_crecords(output_dir, num_cut=None):
+    from experiments.ontology.data import load_rc_data
+    from experiments.ontology.symbols import RC_CLASSES_MAP
+
+    choices = [BinChoice.NO.value, BinChoice.YES.value]
+    sclasses = RC_CLASSES_MAP
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0., shuffle=False)
 
-    sorted_dataset = list(sorted(dataset, key=lambda rr: rr.relation))
-    del dataset
+    def get_rel(rr): return rr.relation
 
-    choices = [BinChoice.NO.value, BinChoice.YES.value]
-    tagger = ManualTagger(output_dir, choices, idefault_choice=1, state=0, data_printer=rrecord_printer)
-    tagger.run(sorted_dataset)
+    sorted_dataset = list(sorted(dataset, key=get_rel))
+    grouped = groupby(get_rel, sorted_dataset)
+    # Tag at most num_cut records
+    dataset = [grouped[key][:num_cut] for key in sorted(grouped.keys())]
+    print(list(map(len, dataset)))
+    dataset = sum(dataset, list())
+
+    # state, processed = from_partially_tagged(grouped, dataset, choices)
+    # tagger = ManualTagger(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer,
+    tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer)
+    tagger.run(dataset)
 
 
 def raw(uri):
@@ -224,7 +246,8 @@ if __name__ == "__main__":
     # todo: move classes to separate file to avoid evaluation of files
     from experiments.ontology.data_structs import RelationRecord
 
-    output_dir = '/home/user/datasets/dbpedia/rc/tagged/'
-    tag_crecords(output_dir)
+    num_cut = 500
+    output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    tag_crecords(output_dir, num_cut)
     #
     # main(output_dir)

@@ -156,11 +156,17 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
         # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
+        s_type = self._encode_type(crecord.subject)
+        o_type = self._encode_type(crecord.object)
+
+        # Set the entities types on crecord's doc here as ground truth
+        #   and call data.encode_data() which will use these anno
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
+
         # todo: think about feeding on each timestep
-        s_type = [self._encode_type(crecord.subject)] * len(self.last_sdp)  # feeding type on each timestep
-        o_type = [self._encode_type(crecord.object)] * len(self.last_sdp)  # feeding type on each timestep
+        s_type = [s_type] * len(self.last_sdp)  # feeding type on each timestep
+        o_type = [o_type] * len(self.last_sdp)  # feeding type on each timestep
         yield (*data, np.array(s_type), np.array(o_type), *cls)
 
 
@@ -233,7 +239,7 @@ def find_simmetric(dataset):
 if __name__ == "__main__":
     import os
     from experiments.ontology.data import nlp, load_rc_data, filter_context
-    from experiments.ontology.data import RelationRecord  # for unpickle()
+    from experiments.ontology.data_structs import RelationRecord
     from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP
 
@@ -254,25 +260,28 @@ if __name__ == "__main__":
     # exit()
 
     dataset = list(unpickle(rc_out))
-    _nonvalid = [rr for rr in dataset if not rr.valid_offsets]
-    print('TOTAL:', len(dataset))
-    print('BAD:', len(_nonvalid))
     _valid = [rr for rr in dataset if rr.valid_offsets]
     _fc = list(filter(None, map(filter_context, _valid)))
-    print('VALID:', len(_valid), 'VALID FILTERED:', len(_fc))
+    print('TOTAL:', len(dataset))
+    print('VALID:', len(_valid))
+    print('(BAD:', len(dataset) - len(_valid), ')')
+    print('VALID FILTERED:', len(_fc))
+    input('press enter to proceed...')
 
     bad = 0
-    for i, cr in enumerate(_valid):
-        # final_rel = sclasses.get(str(cr.relation))
-        final_rel = sclasses.get(cr.relation)
-        true_tag = (final_rel, cr.direction)
-        print(cr.triple, true_tag)
-        # assert encoder.tags.decode(encoder.tags.encode(true_tag)) == true_tag
-        spans = crecord2spans(cr, nlp)
-        if not spans:
-            bad += 1
-    print('BAD_C2S in _valid:', bad)  # should be zero
+    for i, record in enumerate(_fc):
+        print()
+        # final_rel = sclasses.get(str(record.relation))
+        # true_tag = (final_rel, record.direction)
 
+        text = record.context.strip()
+        xs = record.s_startr
+        s = text[xs:record.s_endr]
+        xo = record.o_startr
+        o = text[xo:record.o_endr]
+        print('t:', text)
+        print('s:', s, 'true:', str(record.subject))
+        print('o:', o, 'true:', str(record.object))
 
         # for data in encoder.encode(cr):
         #     data, clss = data[:c], data[c:]

@@ -29,8 +29,8 @@ def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_co
     if train_new: _nlp.entity = EntityRecognizer(_nlp.vocab, entity_types=ALL_ENT_CLASSES)
 
     # Add unknown entity types
-    # for ent_type in NEW_ENT_CLASSES:
-    #     _nlp.entity.add_label(ent_type)
+    for ent_type in NEW_ENT_CLASSES:
+        _nlp.entity.add_label(ent_type)
 
     # Add new words to vocab
     for doc, _ in train_data:
@@ -172,22 +172,29 @@ def main():
     log.info('train_ner: starting loading...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.v2.pck'
-    # model_dir = 'models3'
-    model_dir = 'models.v2.1.i1'
-    # nlp2 = nlp
-    nlp2 = spacy.load('en', path=model_dir)
 
     dataset = list(unpickle(dataset_dir + dataset_file))
-    dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=LESS_ENT_CLASSES))
+    dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=ALL_ENT_CLASSES))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
 
+    random.seed(2)
+    model_dir = 'models.v3.2.i10'
+    nlp2 = nlp
+    # nlp2 = spacy.load('en', path=model_dir)  # continuing training
+
     log.info('train_ner: starting training...')
-    train_ner(nlp2, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
-    model_dir = model_dir[:-1] + str(int(model_dir[-1])+1)
+    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
     save_model(nlp2, model_dir)
-    train_ner(nlp2, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
-    model_dir = model_dir[:-1] + str(int(model_dir[-1])+1)
+    model_dir = 'models.v3.2.i20'
+    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
     save_model(nlp2, model_dir)
+    model_dir = 'models.v3.2.i30'
+    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
+    save_model(nlp2, model_dir)
+
+    # train_ner(nlp2, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
+    # model_dir = model_dir[:-1] + str(int(model_dir[-1])+1)
+    # save_model(nlp2, model_dir)
 
     print("##### TRAIN DATA #####")
     tr_trues, tr_preds = get_preds(nlp2, tr_data)
@@ -200,5 +207,6 @@ def main():
 
 
 if __name__ == '__main__':
-    from experiments.ontology.data import ContextRecord, EntityRecord  # for unpickle()
+    from experiments.ontology.data_structs import EntityRecord, ContextRecord
+
     main()

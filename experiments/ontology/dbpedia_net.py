@@ -215,7 +215,7 @@ def main():
     np.random.seed(2)
     batch_size = 1
     epochs = 2
-    model_name = 'noner.dr.noaug.v4'
+    model_name = 'noner.dr.noaug.v4.2'
     sclasses = RC_CLASSES_MAP
     # inverse = RC_INVERSE_MAP
     data_dir = '/home/user/datasets/dbpedia/'
@@ -237,29 +237,30 @@ def main():
     # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
     assert len(encoder.vector_length) == encoder.channels
 
-    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    # net.compile2()
-    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 1)
-    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    net.compile2()
+    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 1)
+    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
 
-    prob_threshold = 0.8
-    nb_rights = eye_test(nlp, net, dataset, sclasses, prob_threshold=prob_threshold)
-    print('total: {}; rights: {} (with probability threshold: {})'.format(len(dataset), nb_rights, prob_threshold))
+    # prob_threshold = 0.8
+    # nb_rights = eye_test(nlp, net, dataset, sclasses, prob_threshold=prob_threshold)
+    # print('total: {}; rights: {} (with probability threshold: {})'.format(len(dataset), nb_rights, prob_threshold))
 
     # eye_test(nlp, net, val_data, sclasses)
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print('Evaluated:', evals)
 
-    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
     # log.info('end training')
 
     # tests = [619, 1034, 1726, 3269, 6990(6992?)]  # some edge cases  # for old data
 
 
 if __name__ == "__main__":
-    from experiments.ontology.data import RelationRecord  # for unpickle()
+    from experiments.ontology.data_structs import RelationRecord
+
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
     main()
