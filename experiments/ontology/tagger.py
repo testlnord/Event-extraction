@@ -2,17 +2,13 @@ import logging as log
 import sys
 import os
 from enum import Enum, IntEnum
+from collections import Counter
 import pickle
 import json
 import curses
 from curses import wrapper
 
 from cytoolz import groupby, first, second, sliding_window
-
-
-class BinChoice(Enum):
-    YES = 'yes'
-    NO = 'no'
 
 
 class KeyMap(IntEnum):
@@ -31,40 +27,58 @@ def default_printer(stdscr, y, x, record):
 
 class ManualTagger:
     @classmethod
-    def continue_tagging(cls, output_dir, choices, idefault_choice=0, data_printer=default_printer):
+    def continue_tagging(cls, output_dir, choices, idefault_choice=-1, default_cursor_pos=0,
+                         print_counts=True, data_printer=default_printer):
+
         with open(os.path.join(output_dir, 'processed.json')) as f:
             state, processed = json.load(f)
         assert all(itag < len(choices) for itag in processed if itag is not None)
-        return cls(output_dir, choices, idefault_choice, data_printer, state, processed)
+        return cls(output_dir, choices, idefault_choice, default_cursor_pos,
+                   state, processed,
+                   print_counts, data_printer)
 
-    def __init__(self, output_dir, choices, idefault_choice=0,
-                 data_printer=default_printer, state=0, processed=None):
+    # change order and names of arg-s
+    def __init__(self, output_dir,
+                 choices, idefault_choice=-1, default_cursor_pos=0,
+                 state=0, processed=None,
+                 print_counts=True, data_printer=default_printer):
         """
 
         :param output_dir:
         :param choices: tagging choices
         :param idefault_choice: index of choice from @choices selected by default
-        :param data_printer: function printing data, taking as arguments (curses.screen, y, x, data_to_print)
+        :param default_cursor_pos: default position of the cursor
         :param state: record in dataset to start from
+        :param processed: list of indexes of tags for entities (default None - no tags provided)
+        :param print_counts: print counts of tagged records or not
+        :param data_printer: function printing data, taking as arguments (curses.screen, y, x, data_to_print)
         """
         self.output_dir = output_dir
         self.choices = choices
-        self._nch = len(choices)
+        self._nchoices = len(self.choices)
         self.idefault_choice = idefault_choice
+        self.default_cursor_pos = default_cursor_pos
+        assert idefault_choice < self._nchoices and default_cursor_pos < self._nchoices, 'Index is out of bounds!'
+        self._cursor = self.default_cursor_pos
         self.printer = data_printer
-
+        self._print_counts = print_counts
         self.processed = processed
         self.state = state
-        self.default_cursor_pos = 0
-        self._cursor = self.default_cursor_pos
         self._statusline = ''
 
-    def run(self, crecords):
-        self.data = crecords
-        self._ndata = len(crecords)
+    def run(self, records):
+        # if isinstance(records, dict):
+        #     todo: self.processed is a list of indices! not the choices itself
+            # self.data, self.processed = zip(*records.items())
+            # assert all(tag in self.choices for tag in self.processed)
+
+        self.data = records
+        self._ndata = len(records)
         if self.processed is None:
             self.processed = [None] * self._ndata
-        assert len(self.processed) == self._ndata
+        assert len(self.processed) == self._ndata, "Provided 'processed' list must be of the same length as the data."
+        assert all(hasattr(record, '__hash__') and hasattr(record, '__eq__') for record in records)\
+            , 'Data records must be hashable.'
 
         try:
             wrapper(self._run)
@@ -83,16 +97,16 @@ class ManualTagger:
         y = 2
         x = 1
         self._schoices = list(map(str, self.choices))
-        _pad = max(map(len, self._schoices)) + 2
+        # _pad = max(map(len, self._schoices)) + 2
 
         while True:
             try:
                 win.clear()
 
                 # Initial choice
-                # todo: it tags first record in any way
-                if self.idefault_choice is not None and self.processed[self.state] is None:
+                if self.processed[self.state] is None:
                     self.processed[self.state] = self.idefault_choice
+                self._counts = Counter(self.processed)
 
                 # Print state and statusline
                 win.addstr(y, x, '{}/{} {}'.format(self.state + 1, self._ndata, self._statusline))
@@ -104,8 +118,15 @@ class ManualTagger:
                 if ichoice is not None:
                     astyles[ichoice] |= curses.A_BOLD
                 # Print choices
+                offset = 0
                 for i, (sch, astyle) in enumerate(zip(self._schoices, astyles)):
-                    win.addstr(y + 1, x + _pad * i, sch, astyle)  # moving cursor
+                    win.addstr(y + 1, x + offset, sch, astyle)  # moving cursor
+                    offset += len(sch)
+                    if self._print_counts:
+                        scount = ' ({})'.format(self._counts[i])
+                        win.addstr(y + 1, x + offset, scount)
+                        offset += len(scount)
+                    offset += 2
                 # Print record
                 self.printer(win, y + 3, x, self.data[self.state])
 
@@ -124,15 +145,20 @@ class ManualTagger:
             elif c == KeyMap.SELECT:
                 self.processed[self.state] = self._cursor
             elif c == KeyMap.NEXT_CHOICE:
-                self._cursor = (self._cursor + 1) % self._nch
+                self._cursor = (self._cursor + 1) % self._nchoices
             elif c == KeyMap.PREV_CHOICE:
-                self._cursor = (self._cursor - 1) % self._nch if self._cursor > 0 else self._nch-1
+                self._cursor = (self._cursor - 1) % self._nchoices if self._cursor > 0 else self._nchoices - 1
             elif c == KeyMap.SAVE:
                 self.save()
                 self._statusline = 'saved {}'.format(self.state + 1)
             elif c == KeyMap.SAVE_AND_CLOSE:
                 self.save()
                 break
+
+    def save_dict(self):
+        tagged = dict(zip(self.data, self.processed))
+        with open(os.path.join(self.output_dir, 'tagged_data.pck'), 'wb') as f:
+            pickle.dump(tagged, f)
 
     def save(self):
         # Dump state (tags)
@@ -195,9 +221,10 @@ def tag_crecords(output_dir, num_cut=None):
     from experiments.ontology.data import load_rc_data
     from experiments.ontology.symbols import RC_CLASSES_MAP
 
-    choices = [BinChoice.NO.value, BinChoice.YES.value]
+    choices = ['no', 'yes', None]
     sclasses = RC_CLASSES_MAP
-    data_dir = '/home/user/datasets/dbpedia/'
+    # data_dir = '/home/user/datasets/dbpedia/'
+    data_dir = '/media/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0., shuffle=False)
@@ -221,10 +248,9 @@ def raw(uri):
     return uri.rsplit('/', 1)[-1]
 
 
-def main():
-    output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'
-    choices = [BinChoice.NO.value, BinChoice.YES.value]
-    tagger = ManualTagger(output_dir, choices, idefault_choice=1, state=0)
+def main(output_dir):
+    choices = ['no', 'yes', None]
+    tagger = ManualTagger(output_dir, choices)
     # tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=-1)
 
     dummy_data = [
@@ -243,11 +269,13 @@ def main():
 if __name__ == "__main__":
     cdir = os.path.join(os.path.dirname(__file__), '..', '..')
     sys.path.append(cdir)
-    # todo: move classes to separate file to avoid evaluation of files
     from experiments.ontology.data_structs import RelationRecord
 
     num_cut = 500
-    output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    # output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    output_dir = '/media/datasets/dbpedia/rc/golden{}/'.format(num_cut)
     tag_crecords(output_dir, num_cut)
-    #
+
+    # output_dir = '/media/datasets/dbpedia/rc/test_tagger'
+    # output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'
     # main(output_dir)
