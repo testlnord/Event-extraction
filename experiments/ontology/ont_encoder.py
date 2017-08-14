@@ -39,7 +39,7 @@ class DBPediaEncoder:
         # self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
         raw_classes = list(product(sorted(set(self.classes.values())), [True, False]))
         log.info('DBPediaEncoder: classes: {}'.format(raw_classes))
-        self.tags = CategoricalTags(raw_classes, default_tag='-')
+        self.tags = CategoricalTags(raw_classes, default_tag=(None, None))
         self.iob_tags = CategoricalTags(sorted(IOB_TAGS))
         self.ner_tags = CategoricalTags(sorted(NER_TAGS), default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(sorted(POS_TAGS))

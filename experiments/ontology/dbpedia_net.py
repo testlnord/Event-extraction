@@ -179,9 +179,11 @@ class DBPediaNet(SequenceNet):
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
 
-def eye_test(net, crecords, sclasses_map, prob_threshold=0.8):
+def eye_test(net, crecords, sclasses_map, prob_threshold=0.5):
     misses = []
     hits = []
+    trues = []
+    preds = []
     for tops, crecord in zip(net.predict_crecords(crecords, topn=3), crecords):
         _ = list(net._encoder.encode(crecord))  # to get the sdp
         sdp = net._encoder.last_sdp
@@ -192,11 +194,13 @@ def eye_test(net, crecords, sclasses_map, prob_threshold=0.8):
             hits.append(_struct)
         else:
             misses.append(_struct)
+        trues.append(true_rel_with_dir)
+        preds.append(tops[0][2])
 
-    print("HITS ({}):".format(len(hits)))
+    print("\n### HITS ({}):".format(len(hits)), '#' * 40)
     for _struct in hits:
         print_tested(*_struct)
-    print("MISSES ({}):".format(len(misses)))
+    print("\n### MISSES ({}):".format(len(misses)), '#' * 40)
     for _struct in misses:
         print_tested(*_struct)
     return hits, misses
@@ -214,25 +218,26 @@ def print_tested(crecord, sdp, tops, true_rel_with_dir):
 
 def main():
     import os
-    from experiments.ontology.symbols import RC_CLASSES_MAP
+    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL
     from experiments.data_utils import unpickle, split, visualise
     from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderWithEntTypes, EncoderDataAugmenter
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
     # todo: load trained NER
-    from experiments.ontology.data import nlp, load_rc_data
+    from experiments.ontology.data import nlp, load_rc_data, load_golden_data
 
     random.seed(2)
     batch_size = 1
     epochs = 3
-    model_name = 'noner.dr.noaug.v4.3'
+    model_name = 'noner.dr.noaug.v4.3.notypes'
     sclasses = RC_CLASSES_MAP
     # inverse = RC_INVERSE_MAP
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True)
+    golden = load_golden_data(sclasses)  # for testing
 
     assert all(rr is not None for rr in dataset)
     # dataset = dataset[:5000]
@@ -243,23 +248,24 @@ def main():
     val_steps = len(val_data) // batch_size
 
     # encoder = EncoderDataAugmenter(encoder, inverse)
-    # encoder = DBPediaEncoder(nlp, sclasses)
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
+    encoder = DBPediaEncoder(nlp, sclasses)
+    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
     # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
     assert len(encoder.vector_length) == encoder.channels
 
-    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    # net.compile2()
-    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
-    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    net.compile2()
+    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
+    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
 
-    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
+    net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
 
-    hits, misses = eye_test(net, val_data, sclasses)
-    print('rights: {} (total: {})'.format(len(hits), len(val_data)))
+    test_data = golden
+    hits, misses = eye_test(net, test_data, sclasses)
+    print('rights: {} (total: {})'.format(len(hits), len(test_data)))
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print('evaluated: {}'.format(evals))
 

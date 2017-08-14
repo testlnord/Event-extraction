@@ -29,6 +29,7 @@ nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # nlp = load_nlp(batch_size=32)
 
 
+data_dir = '/home/user/datasets/dbpedia/'
 props_dir = '/home/user/datasets/dbpedia/qs/props/'
 contexts_dir = '/home/user/datasets/dbpedia/contexts/'
 classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
@@ -132,6 +133,15 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=Tr
     rc.extend(rc_neg)
     if shuffle: random.shuffle(rc)
     return rc
+
+
+def load_golden_data(allowed_classes, rc_dir=os.path.join(data_dir, 'rc', 'golden500')):
+    filename = 'annotated_data.pck'
+    with open(os.path.join(rc_dir, filename), 'rb') as f:
+        d = pickle.load(f)
+    records, annotations = zip(*d.items())
+    records = [rr for rr in records if str(rr.relation) in allowed_classes]
+    return records
 
 
 def resolve_entities(article_links, graph=gdb):
@@ -385,7 +395,6 @@ if __name__ == "__main__":
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
 
-    data_dir = '/home/user/datasets/dbpedia/'
     ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
