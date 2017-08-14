@@ -2,7 +2,7 @@ import logging as log
 import sys
 import os
 from enum import Enum, IntEnum
-from collections import Counter
+from collections import Counter, OrderedDict
 import pickle
 import json
 import curses
@@ -26,21 +26,10 @@ def default_printer(stdscr, y, x, record):
 
 
 class ManualTagger:
-    @classmethod
-    def continue_tagging(cls, output_dir, choices, idefault_choice=-1, default_cursor_pos=0,
-                         print_counts=True, data_printer=default_printer):
+    _annotated_filename = 'annotated_data.pck'
 
-        with open(os.path.join(output_dir, 'processed.json')) as f:
-            state, processed = json.load(f)
-        assert all(itag < len(choices) for itag in processed if itag is not None)
-        return cls(output_dir, choices, idefault_choice, default_cursor_pos,
-                   state, processed,
-                   print_counts, data_printer)
-
-    # change order and names of arg-s
     def __init__(self, output_dir,
                  choices, idefault_choice=-1, default_cursor_pos=0,
-                 state=0, processed=None,
                  print_counts=True, data_printer=default_printer):
         """
 
@@ -55,6 +44,7 @@ class ManualTagger:
         """
         self.output_dir = output_dir
         self.choices = choices
+        assert all(choice is not None for choice in self.choices)
         self._nchoices = len(self.choices)
         self.idefault_choice = idefault_choice
         self.default_cursor_pos = default_cursor_pos
@@ -62,23 +52,29 @@ class ManualTagger:
         self._cursor = self.default_cursor_pos
         self.printer = data_printer
         self._print_counts = print_counts
-        self.processed = processed
-        self.state = state
-        self._statusline = ''
 
-    def run(self, records):
-        # if isinstance(records, dict):
-        #     todo: self.processed is a list of indices! not the choices itself
-            # self.data, self.processed = zip(*records.items())
-            # assert all(tag in self.choices for tag in self.processed)
+    def continue_tagging(self):
+        with open(os.path.join(self.output_dir, self._annotated_filename), 'rb') as f:
+            annotated = pickle.load(f)
+            # assert isinstance(annotated, OrderedDict)
+        ch_map = dict((choice, i) for i, choice in enumerate(self.choices))
+        records, annotations = zip(*annotated.items())
+        _processed = [ch_map[annotation] if annotation is not None else None for annotation in annotations]
+        _pos = 0
+        max_pos = len(_processed)-1
+        while _pos < max_pos and _processed[_pos] is not None:
+            _pos += 1  # choosing first untagged record
+        self.run(records, _processed, _pos)
 
+    def run(self, records, processed=None, state=0):
+        assert all(hasattr(record, '__hash__') and hasattr(record, '__eq__') for record in records) \
+            , 'Data records must be hashable.'
         self.data = records
         self._ndata = len(records)
-        if self.processed is None:
-            self.processed = [None] * self._ndata
-        assert len(self.processed) == self._ndata, "Provided 'processed' list must be of the same length as the data."
-        assert all(hasattr(record, '__hash__') and hasattr(record, '__eq__') for record in records)\
-            , 'Data records must be hashable.'
+        self._processed = [None] * self._ndata if not processed else processed
+        self._pos = state
+        assert len(self._processed) == self._ndata
+        assert self._pos < self._ndata
 
         try:
             wrapper(self._run)
@@ -89,7 +85,6 @@ class ManualTagger:
 
     def _run(self, stdscr):
         curses.curs_set(False)
-
         # wy = 3
         # wx = 1
         # win = stdscr.derwin(wy, wx)
@@ -98,23 +93,24 @@ class ManualTagger:
         x = 1
         self._schoices = list(map(str, self.choices))
         # _pad = max(map(len, self._schoices)) + 2
+        self._statusline = ''
 
         while True:
             try:
                 win.clear()
 
                 # Initial choice
-                if self.processed[self.state] is None:
-                    self.processed[self.state] = self.idefault_choice
-                self._counts = Counter(self.processed)
+                if self._processed[self._pos] is None:
+                    self._processed[self._pos] = self.idefault_choice
+                self._counts = Counter(self._processed)
 
                 # Print state and statusline
-                win.addstr(y, x, '{}/{} {}'.format(self.state + 1, self._ndata, self._statusline))
+                win.addstr(y, x, '{}/{} {}'.format(self._pos + 1, self._ndata, self._statusline))
                 # Set styles for choices
                 astyles = [curses.A_NORMAL] * len(self.choices)
                 astyles[self._cursor] |= curses.A_UNDERLINE
                 # Highlight actual choice
-                ichoice = self.processed[self.state]
+                ichoice = self._processed[self._pos]
                 if ichoice is not None:
                     astyles[ichoice] |= curses.A_BOLD
                 # Print choices
@@ -128,51 +124,48 @@ class ManualTagger:
                         offset += len(scount)
                     offset += 2
                 # Print record
-                self.printer(win, y + 3, x, self.data[self.state])
+                self.printer(win, y + 3, x, self.data[self._pos])
 
                 win.refresh()
-                # self._statusline = ''
             except curses.error:  # some meaningless error
                 pass
 
             c = win.getch()
             if c == KeyMap.NEXT:
                 self._cursor = self.default_cursor_pos
-                self.state = min(self.state + 1, self._ndata - 1)
+                self._pos = min(self._pos + 1, self._ndata - 1)
             elif c == KeyMap.PREV:
                 self._cursor = self.default_cursor_pos
-                self.state = max(self.state - 1, 0)
+                self._pos = max(self._pos - 1, 0)
             elif c == KeyMap.SELECT:
-                self.processed[self.state] = self._cursor
+                self._processed[self._pos] = self._cursor
             elif c == KeyMap.NEXT_CHOICE:
                 self._cursor = (self._cursor + 1) % self._nchoices
             elif c == KeyMap.PREV_CHOICE:
                 self._cursor = (self._cursor - 1) % self._nchoices if self._cursor > 0 else self._nchoices - 1
             elif c == KeyMap.SAVE:
-                self.save()
-                self._statusline = 'saved {}'.format(self.state + 1)
+                self.save_dict()
+                self._statusline = 'saved {}'.format(self._pos + 1)
             elif c == KeyMap.SAVE_AND_CLOSE:
-                self.save()
+                self.save_dict()
                 break
 
     def save_dict(self):
-        tagged = dict(zip(self.data, self.processed))
-        with open(os.path.join(self.output_dir, 'tagged_data.pck'), 'wb') as f:
+        """Save mapping of data to annotations"""
+        choices = [self.choices[i] if i is not None else None for i in self._processed]
+        tagged = OrderedDict(zip(self.data, choices))
+        with open(os.path.join(self.output_dir, self._annotated_filename), 'wb') as f:
             pickle.dump(tagged, f)
 
-    def save(self):
-        # Dump state (tags)
-        with open(os.path.join(self.output_dir, 'processed.json'), 'w') as fp:
-            json.dump((self.state, self.processed), fp)
-
-        grouped = groupby(second, zip(self.data, self.processed))
+    def save_to_files(self):
+        """Save data with the same annotations to the same files"""
+        grouped = groupby(second, zip(self.data, self._processed))
         for ichoice, choice in enumerate(self.choices):
             # Opening files anyway to empty them
             with open(os.path.join(self.output_dir, str(choice) + '.pck'), 'wb') as f:
                 if ichoice in grouped:
                     for record in grouped[ichoice]:
                         pickle.dump(record, f)
-
         # Saving untagged data separately
         with open(os.path.join(self.output_dir, '__untagged__.pck'), 'wb') as f:
             if None in grouped:
@@ -203,28 +196,14 @@ def rrecord_printer(win, y, x, record):
     win.addstr(text[b2:])
 
 
-# temporary
-def from_partially_tagged(grouped, dataset, choices):
-    from experiments.ontology.sub_ont import dbo
-    len_author = len(grouped[dbo.author])
-    len_computingPlatform = len(grouped[dbo.computingPlatform])
-    __dir = '/home/user/datasets/dbpedia/rc/tagged/'
-    tagger = ManualTagger.continue_tagging(__dir, choices, idefault_choice=1, data_printer=rrecord_printer)
-    processed = tagger.processed[:min(num_cut, len_author)] + \
-                tagger.processed[len_author:len_author + min(num_cut, len_computingPlatform)]
-    state = len(processed) - 1
-    processed += [None] * (len(dataset) - len(processed))
-    return state, processed
-
-
 def tag_crecords(output_dir, num_cut=None):
     from experiments.ontology.data import load_rc_data
     from experiments.ontology.symbols import RC_CLASSES_MAP
 
-    choices = ['no', 'yes', None]
+    choices = ['no', 'yes', 'None']
     sclasses = RC_CLASSES_MAP
-    # data_dir = '/home/user/datasets/dbpedia/'
-    data_dir = '/media/datasets/dbpedia/'
+    data_dir = '/home/user/datasets/dbpedia/'
+    # data_dir = '/media/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0., shuffle=False)
@@ -238,10 +217,16 @@ def tag_crecords(output_dir, num_cut=None):
     print(list(map(len, dataset)))
     dataset = sum(dataset, list())
 
-    # state, processed = from_partially_tagged(grouped, dataset, choices)
-    # tagger = ManualTagger(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer,
-    tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer)
-    tagger.run(dataset)
+    tagger = ManualTagger(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer)
+    tagger.continue_tagging()
+
+    # transition from previous tagger version
+    # with open(os.path.join(output_dir, 'processed.json')) as f:
+    #     state, processed = json.load(f)
+    # for i, item in enumerate(processed):
+    #     if item is None:
+    #         processed[i] = 'None'
+    # tagger.run(dataset, processed, state)
 
 
 def raw(uri):
@@ -249,9 +234,8 @@ def raw(uri):
 
 
 def main(output_dir):
-    choices = ['no', 'yes', None]
+    choices = ['no', 'yes', 'None']
     tagger = ManualTagger(output_dir, choices)
-    # tagger = ManualTagger.continue_tagging(output_dir, choices, idefault_choice=-1)
 
     dummy_data = [
         'First string',
@@ -263,19 +247,17 @@ def main(output_dir):
     ]
 
     tagger.run(dummy_data)
-    print(tagger.processed)
+    print(tagger._processed)
 
 
 if __name__ == "__main__":
     cdir = os.path.join(os.path.dirname(__file__), '..', '..')
     sys.path.append(cdir)
-    from experiments.ontology.data_structs import RelationRecord
+    from experiments.ontology.data_structs import RelationRecord  # for unpickling
 
     num_cut = 500
-    # output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
-    output_dir = '/media/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
     tag_crecords(output_dir, num_cut)
 
-    # output_dir = '/media/datasets/dbpedia/rc/test_tagger'
     # output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'
     # main(output_dir)
