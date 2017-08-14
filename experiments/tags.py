@@ -1,4 +1,4 @@
-
+import logging as log
 
 class Tags:
     """Mapping between tags in user-format and format used in algorithms."""
@@ -21,6 +21,14 @@ class CategoricalTags(Tags):
         :param raw_tags: tags for mapping to numerical values
         :param add_default_tag: bool. If True, add additional 'fallback' tag (which takes zero class).
         """
+        from collections.abc import Sequence
+        if not isinstance(raw_tags, Sequence):
+            log.warning('Categorial tags: raw_tags argument possibly has unstable ordering! '
+                        'Incompatability between instances of the class with the same raw_tags is likely.')
+            # todo: add sorted(raw_tags) here to ensure always-ness of order of tags?
+            #   i.e. consider two classes constructed with the same set of tags:
+            #   tags are same but encoding (ordering) is likely to be different!
+
         i = int(default_tag is not None)
         nbtags = len(raw_tags) + i
         self.tag_map = dict(zip(raw_tags, range(i, nbtags)))

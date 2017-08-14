@@ -37,14 +37,13 @@ class DBPediaEncoder:
         # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
         # self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
         # self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
-        raw_classes = list(product(set(self.classes.values()), [True, False]))
+        raw_classes = list(product(sorted(set(self.classes.values())), [True, False]))
         log.info('DBPediaEncoder: classes: {}'.format(raw_classes))
         self.tags = CategoricalTags(raw_classes, default_tag='-')
-
-        self.iob_tags = CategoricalTags(IOB_TAGS)
-        self.ner_tags = CategoricalTags(NER_TAGS, default_tag='')  # default_tag for non-named entities
-        self.pos_tags = CategoricalTags(POS_TAGS)
-        self.dep_tags = CategoricalTags(DEP_TAGS, default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
+        self.iob_tags = CategoricalTags(sorted(IOB_TAGS))
+        self.ner_tags = CategoricalTags(sorted(NER_TAGS), default_tag='')  # default_tag for non-named entities
+        self.pos_tags = CategoricalTags(sorted(POS_TAGS))
+        self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
 
@@ -131,7 +130,7 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
     from experiments.ontology.sub_ont import NERTypeResolver
     from experiments.ontology.symbols import ENT_CLASSES
     _ner_type_resolver = NERTypeResolver()
-    _ent_tags = CategoricalTags(ENT_CLASSES, default_tag='')
+    _ent_tags = CategoricalTags(sorted(ENT_CLASSES), default_tag='')
 
     def _encode_type(self, uri):
         return self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
@@ -246,6 +245,13 @@ if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     sclasses = RC_CLASSES_MAP
+    raw_classes1 = list(product(sorted(set(sclasses.values())), [True, False]))
+    raw_classes2 = list(product(sorted(set(sclasses.values())), [True, False]))
+    raw_classes3 = list(product(sorted(set(sclasses.values())), [True, False]))
+    assert all(c1 == c2 == c3 for c1, c2, c3 in zip(raw_classes1, raw_classes2, raw_classes3))
+    exit(0)
+
+
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
