@@ -114,7 +114,7 @@ def load_inverse_mapping(filename=classes_dir + 'prop_inverse.csv'):
     return inverse
 
 
-def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=True):
+def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=True, exclude_records=frozenset()):
     """
     Load data for relation classification given paths to pickled RelationRecords and make basic filtering.
     :param allowed_classes: keep only these relation classes (specified in URI form)
@@ -122,25 +122,43 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=1., shuffle=Tr
     :param rc_neg_file: path to file with pickled negative RelationRecords (i.e. no relation)
     :param neg_ratio: max ratio of #negatives to #positive records (i.e. how much negatives to load)
     :param shuffle: bool, shuffle or not dataset
+    :param exclude_records: collection (preferably set-like with fast lookup) of records to filter them out
     :return: List[RelationRecord]
     """
     _classes = set(allowed_classes)
-    _frc = [filter_context(rr) for rr in unpickle(rc_file) if rr.valid_offsets and str(rr.relation) in _classes]
-    rc = list(filter(None, _frc))
-    # rc = [rr for rr in _frc if rr is not None and rr.subject != rr.object]  # same subject and object sometimes happen
-    nb_neg = int(len(rc) * neg_ratio)
-    rc_neg = islice(filter(None, (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets)), nb_neg)
-    rc.extend(rc_neg)
-    if shuffle: random.shuffle(rc)
-    return rc
+    records = []
+    for rr in unpickle(rc_file):
+        # Same subject and object sometimes happen
+        if str(rr.relation) in _classes and rr not in exclude_records \
+            and rr.valid_offsets and rr.subject != rr.object:
+            _fc = filter_context(rr)
+            if _fc is not None:
+                records.append(_fc)
+    nb_neg = int(len(records) * neg_ratio)
+    rc_neg_gen = (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets and rr.subject != rr.object)
+    rc_neg = islice(filter(None, rc_neg_gen), nb_neg)
+    records.extend(rc_neg)
+    if shuffle: random.shuffle(records)
+    return records
 
 
-def load_golden_data(allowed_classes, rc_dir=os.path.join(data_dir, 'rc', 'golden500')):
+# annotations are somewhat hardcoded...
+RecordAnnotation = namedtuple('RecordAnnotation', ['positive', 'negative', 'none'])
+def load_golden_data(allowed_classes, rc_dir=os.path.join(data_dir, 'rc', 'golden500'), shuffle=True,
+                     annotations=RecordAnnotation('yes', 'no', 'None')):
+    assert isinstance(annotations, RecordAnnotation)
     filename = 'annotated_data.pck'
     with open(os.path.join(rc_dir, filename), 'rb') as f:
         d = pickle.load(f)
-    records, annotations = zip(*d.items())
-    records = [rr for rr in records if str(rr.relation) in allowed_classes]
+    records = []
+    for record, annotation in d.items():
+        if annotation == annotations.negative:
+            record.relation = None
+        elif annotation == annotations.none:
+            continue
+        if str(record.relation) in allowed_classes:
+            records.append(record)
+    if shuffle: random.shuffle(records)
     return records
 
 
