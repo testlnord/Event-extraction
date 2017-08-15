@@ -1,15 +1,13 @@
-import logging as log
 import json
+import logging as log
 import pathlib
 import random
-from itertools import islice
 
-import spacy
-from spacy.pipeline import EntityRecognizer
 from spacy.gold import GoldParse
-from spacy.tagger import Tagger
+from spacy.pipeline import EntityRecognizer
 
-from experiments.ontology.symbols import NEW_ENT_CLASSES, ENT_CLASSES, ALL_ENT_CLASSES, LESS_ENT_CLASSES
+from experiments.dl_utils import print_confusion_matrix
+from experiments.ontology.symbols import NEW_ENT_CLASSES, ENT_CLASSES, ALL_ENT_CLASSES
 
 
 def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=True, train_new=False):
@@ -86,30 +84,6 @@ def save_model(_nlp, model_dir):
         ner.vocab.strings.dump(file_)
 
 
-# todo: what to do with features?
-def some(nlp):
-    # v1.1.2 onwards
-    if nlp.tagger is None:
-        print('---- WARNING ----')
-        print('Data directory not found')
-        print('please run: `python -m spacy.en.download --force all` for better performance')
-        print('Using feature templates for tagging')
-        print('-----------------')
-        nlp.tagger = Tagger(nlp.vocab, features=Tagger.feature_templates)
-
-    example_train_data = [
-        (
-            'Who is Shaka Khan?',
-            [(len('Who is '), len('Who is Shaka Khan'), 'PERSON')]
-        ),
-        (
-            'I like London and Berlin.',
-            [(len('I like '), len('I like London'), 'LOC'),
-             (len('I like London and '), len('I like London and Berlin'), 'LOC')]
-        )
-    ]
-
-
 def get_preds(updated_nlp, test_data, nil='O', print_=False):
     y_true = []
     y_pred = []
@@ -129,43 +103,11 @@ def get_preds(updated_nlp, test_data, nil='O', print_=False):
     return y_true, y_pred
 
 
-def print_confusion_matrix(cm, labels, max_print_width=12, linewidth=240):
-    """Rows are predictions, columns are true labels.
-       i.e. when labels are [ant, cat]: if cat(row) * ant(column) = 2
-       then 2 times we predicted by mistake that a cat is an ant"""
-    from numpy import set_printoptions
-    fp = cm[:-1, -1].sum()  # negatives, classified as positives
-    fn = cm[-1, :-1].sum()  # positives, classified as negatives
-    tp = sum([cm[i, i] for i in range(len(cm)-1)])
-    tn = cm[-1, -1]
-    precision = tp / (tp + fp)
-    recall = tp / (tp + fn)
-    f1 = 2 * precision * recall / (precision + recall)
-
-    l1 = max([len(str(x)) for x in cm.flatten()])
-    l2 = max(map(len, labels))
-    l = min(max(l1, l2), max_print_width)  # format print width
-    def formatter(thing): return '{}'.format(thing)[:l].rjust(l)
-    set_printoptions(linewidth=linewidth, formatter={'int': formatter})
-    _labels = [formatter(x) for x in labels]
-
-    _rows = str(cm).split('\n')
-    print(' '.join([' '*(l+2)] + _labels))
-    for row_label, row in zip(_labels, _rows):
-        print(row_label, row)
-    print('tn: {}; tp: {}; fp: {}; fn: {}'.format(tn, tp, fp, fn))
-    print('precision: {}; recall: {}; f1: {}'.format(precision, recall, f1))
-    print()
-
-
 def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
-    from sklearn.metrics import confusion_matrix
     classes = list(sorted(labels)) + [nil]
-    cm = confusion_matrix(y_true=y_true, y_pred=y_pred, labels=classes)
-    print_confusion_matrix(cm, classes)
+    cm = print_confusion_matrix(y_true=y_true, y_pred=y_pred, labels=classes, max_print_width=7)
     _classes = list(sorted(ALL_ENT_CLASSES)) + [nil]
-    _cm = confusion_matrix(y_true=y_true, y_pred=y_pred, labels=_classes)
-    print_confusion_matrix(_cm, _classes)
+    _cm = print_confusion_matrix(y_true=y_true, y_pred=y_pred, labels=_classes, max_print_width=7)
     return cm
 
 
@@ -181,22 +123,21 @@ def main():
 
     # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
     dataset = list(unpickle(dataset_dir + dataset_file))
-    dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=ALL_ENT_CLASSES))
+    dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=NEW_ENT_CLASSES))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
     # ts_data = dataset
 
     random.seed(2)
     log.info('train_ner: starting training...')
 
-    model_dir = 'models.v3.2.i10'
     nlp2 = nlp
     # nlp2 = spacy.load('en', path=model_dir)  # continuing training
-    # train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
-    # save_model(nlp2, model_dir)
-
-    # train_ner(nlp2, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
-    # model_dir = model_dir[:-1] + str(int(model_dir[-1])+1)
-    # save_model(nlp2, model_dir)
+    train_ner(nlp2, tr_data, iterations=20, dropout=0., learn_rate=0.001, tags_complete=False, train_new=False)
+    model_dir = 'models.v4.only_new.i20'
+    save_model(nlp2, model_dir)
+    train_ner(nlp2, tr_data, iterations=20, dropout=0., learn_rate=0.001, tags_complete=False, train_new=False)
+    model_dir = 'models.v4.only_new.i40'
+    save_model(nlp2, model_dir)
 
     print("##### TRAIN DATA #####")
     tr_trues, tr_preds = get_preds(nlp2, tr_data)
@@ -207,6 +148,5 @@ def main():
 
 
 if __name__ == '__main__':
-    from experiments.ontology.data_structs import EntityRecord, ContextRecord
-
+    from experiments.ontology.data_structs import ContextRecord, EntityRecord
     main()
