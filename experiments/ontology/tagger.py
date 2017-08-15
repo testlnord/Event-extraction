@@ -201,19 +201,22 @@ RecordAnnotation = namedtuple('RecordAnnotation', ['positive', 'negative', 'none
 default_annotations = RecordAnnotation('yes', 'no', 'None')
 
 
-def load_golden_data(allowed_classes, rc_dir, shuffle=True,
-                     annotations=default_annotations):
+def load_golden_data(allowed_classes, rc_dir, shuffle=True, annotations=default_annotations):
     assert isinstance(annotations, RecordAnnotation)
+
     filename = 'annotated_data.pck'
     with open(os.path.join(rc_dir, filename), 'rb') as f:
         d = pickle.load(f)
+
     records = []
+    _classes = set(allowed_classes)
     for record, annotation in d.items():
         if annotation == annotations.negative:
             record.relation = None
+            records.append(record)
         elif annotation == annotations.none:
             continue
-        if str(record.relation) in allowed_classes:
+        if str(record.relation) in _classes:
             records.append(record)
     if shuffle: random.shuffle(records)
     return records

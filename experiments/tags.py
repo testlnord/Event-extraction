@@ -41,6 +41,10 @@ class CategoricalTags(Tags):
         # Case when there're only 2 values to distinguish. Only one value is necessary (i.e. 0-1 vs. [0 1]-[1 0]).
         self.nbtags = 1 if nbtags == 2 else nbtags
 
+    @property
+    def raw_tags(self):
+        return list(self.tag_map.keys())
+
     def encode(self, raw_tag):
         index = self.tag_map.get(raw_tag, self._default_tag_index)
         if index is None:

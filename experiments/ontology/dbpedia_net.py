@@ -203,6 +203,17 @@ def eye_test(net, crecords, sclasses_map, prob_threshold=0.5):
     print("\n### MISSES ({}):".format(len(misses)), '#' * 40)
     for _struct in misses:
         print_tested(*_struct)
+
+    from experiments.dl_utils import print_confusion_matrix
+    def format_class(rel_with_dir):
+        return str(rel_with_dir[0])[:10] + '-' + str(rel_with_dir[1])[:1]
+    _tags = net._encoder.tags
+    raw_classes = list(sorted(_tags.raw_tags)) + [_tags.default_tag]
+    trues = list(map(format_class, trues))
+    preds = list(map(format_class, preds))
+    classes = list(map(format_class, raw_classes))
+    print_confusion_matrix(y_true=trues, y_pred=preds, labels=classes, max_print_width=20)
+
     return hits, misses
 
 
@@ -231,7 +242,7 @@ def main():
     random.seed(2)
     batch_size = 1
     epochs = 4
-    model_name = 'noner.dr.noaug.v4.4'
+    model_name = 'noner.dr.noaug.nc.v4.4'
     sclasses = RC_CLASSES_MAP
     # inverse = RC_INVERSE_MAP
 
@@ -240,23 +251,27 @@ def main():
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     # Load golden-set (test-data), cutting it; load train-set, excluding golden-set from there
-    golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:3000]  # for testing
+    golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:4000]  # for testing
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True,
                            exclude_records=set(golden))
     train_data, val_data = dataset, golden  # using golden set as testing set
     # train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
-    nb_negs = len([rr.r for rr in dataset if not rr.r])
-    log.info('data: total: {} (negatives: {}); train: {}; val: {}'.format(len(dataset), nb_negs, len(train_data), len(val_data)))
+    nb_negs = len([rr for rr in dataset if not rr.relation])
+    nb_negs_val = len([rr for rr in val_data if not rr.relation])
+    log.info('data: total: {} (negs: {}); train: {}; val: {} (negs: {})'
+             .format(len(dataset), nb_negs, len(train_data), len(val_data), nb_negs_val))
 
+    # Loading encoder
     # encoder = DBPediaEncoder(nlp, sclasses)
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, expand_noun_chunks=True)
     # encoder = EncoderDataAugmenter(encoder, inverse)
 
+    # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
-    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
+    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))

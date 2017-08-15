@@ -9,9 +9,9 @@ class RelationRecord:
         # self.s = self.subject = URIRef(s)
         # self.r = self.relation = URIRef(r)
         # self.o = self.object = URIRef(o)
-        self.s = self.subject = s
-        self.r = self.relation = r
-        self.o = self.object = o
+        self.subject = s
+        self.relation = r
+        self.object = o
         self.s0 = self.s_start = s0
         self.s1 = self.s_end = s1
         self.o0 = self.o_start = o0
