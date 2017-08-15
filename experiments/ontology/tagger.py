@@ -1,8 +1,9 @@
 import logging as log
+import random
 import sys
 import os
 from enum import Enum, IntEnum
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, namedtuple
 import pickle
 import json
 import curses
@@ -196,12 +197,33 @@ def rrecord_printer(win, y, x, record):
     win.addstr(text[b2:])
 
 
+RecordAnnotation = namedtuple('RecordAnnotation', ['positive', 'negative', 'none'])
+default_annotations = RecordAnnotation('yes', 'no', 'None')
+
+
+def load_golden_data(allowed_classes, rc_dir, shuffle=True,
+                     annotations=default_annotations):
+    assert isinstance(annotations, RecordAnnotation)
+    filename = 'annotated_data.pck'
+    with open(os.path.join(rc_dir, filename), 'rb') as f:
+        d = pickle.load(f)
+    records = []
+    for record, annotation in d.items():
+        if annotation == annotations.negative:
+            record.relation = None
+        elif annotation == annotations.none:
+            continue
+        if str(record.relation) in allowed_classes:
+            records.append(record)
+    if shuffle: random.shuffle(records)
+    return records
+
+
 def tag_crecords(output_dir, num_cut=None):
     from experiments.ontology.data import load_rc_data
-    from experiments.ontology.symbols import RC_CLASSES_MAP
+    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_MORE
 
-    choices = ['no', 'yes', 'None']
-    sclasses = RC_CLASSES_MAP
+    sclasses = RC_CLASSES_MAP_MORE
     data_dir = '/home/user/datasets/dbpedia/'
     # data_dir = '/media/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
@@ -217,8 +239,11 @@ def tag_crecords(output_dir, num_cut=None):
     print(list(map(len, dataset)))
     dataset = sum(dataset, list())
 
-    tagger = ManualTagger(output_dir, choices, idefault_choice=1, data_printer=rrecord_printer)
-    tagger.continue_tagging()
+    output_dir = os.path.join(output_dir, 'more')
+    tagger = ManualTagger(output_dir, choices=default_annotations,
+                          idefault_choice=0, default_cursor_pos=1, data_printer=rrecord_printer)
+    tagger.run(dataset)
+    # tagger.continue_tagging()
 
     # transition from previous tagger version
     # with open(os.path.join(output_dir, 'processed.json')) as f:
@@ -256,8 +281,8 @@ if __name__ == "__main__":
     from experiments.ontology.data_structs import RelationRecord  # for unpickling
 
     num_cut = 500
-    output_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
-    tag_crecords(output_dir, num_cut)
+    golden_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    tag_crecords(golden_dir, num_cut)
 
     # output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'
     # main(output_dir)

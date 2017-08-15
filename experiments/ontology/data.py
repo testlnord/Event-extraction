@@ -20,8 +20,7 @@ from experiments.ontology.data_structs import RelationRecord, EntityRecord, Cont
 from experiments.ontology.sub_ont import NERTypeResolver
 from experiments.ontology.sub_ont import dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import gf, gfall, gdb
-
+from experiments.ontology.sub_ont import gf, gdb
 
 nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # from experiments.utils import load_nlp
@@ -138,26 +137,6 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=Tr
     rc_neg_gen = (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets and rr.subject != rr.object)
     rc_neg = islice(filter(None, rc_neg_gen), nb_neg)
     records.extend(rc_neg)
-    if shuffle: random.shuffle(records)
-    return records
-
-
-# annotations are somewhat hardcoded...
-RecordAnnotation = namedtuple('RecordAnnotation', ['positive', 'negative', 'none'])
-def load_golden_data(allowed_classes, rc_dir=os.path.join(data_dir, 'rc', 'golden500'), shuffle=True,
-                     annotations=RecordAnnotation('yes', 'no', 'None')):
-    assert isinstance(annotations, RecordAnnotation)
-    filename = 'annotated_data.pck'
-    with open(os.path.join(rc_dir, filename), 'rb') as f:
-        d = pickle.load(f)
-    records = []
-    for record, annotation in d.items():
-        if annotation == annotations.negative:
-            record.relation = None
-        elif annotation == annotations.none:
-            continue
-        if str(record.relation) in allowed_classes:
-            records.append(record)
     if shuffle: random.shuffle(records)
     return records
 
