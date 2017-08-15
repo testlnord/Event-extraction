@@ -2,20 +2,19 @@ import logging as log
 import json
 import pathlib
 import random
+from itertools import islice
 
 import spacy
 from spacy.pipeline import EntityRecognizer
 from spacy.gold import GoldParse
 from spacy.tagger import Tagger
 
-from experiments.data_utils import unpickle
-from experiments.ontology.data import transform_ner_dataset, nlp
 from experiments.ontology.symbols import NEW_ENT_CLASSES, ENT_CLASSES, ALL_ENT_CLASSES, LESS_ENT_CLASSES
 
 
 def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=True, train_new=False):
     """
-    Train spacy entity recogniser (either the new on or update existing nlp.entity)
+    Train spacy entity recogniser (either the new on or update existing _nlp.entity)
     :param _nlp: spacy.lang.Language class, containing EntityRecogniser which is to be trained
     :param train_data: dataset in spacy format for training
     :param iterations: num of full iterations through the dataset
@@ -42,7 +41,7 @@ def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_co
         random.shuffle(train_data)
         loss = 0.
         for old_doc, entity_offsets in train_data:
-            doc = _nlp.make_doc(old_doc.text)  # it is needed despite that the data is already preprocessed (by nlp() call)
+            doc = _nlp.make_doc(old_doc.text)  # it is needed despite that the data is already preprocessed (by _nlp() call)
             gold = GoldParse(doc, entities=entity_offsets)
 
             # By default, the GoldParse class assumes that the entities
@@ -130,7 +129,7 @@ def get_preds(updated_nlp, test_data, nil='O', print_=False):
     return y_true, y_pred
 
 
-def print_confusion_matrix(cm, labels):
+def print_confusion_matrix(cm, labels, max_print_width=12, linewidth=240):
     """Rows are predictions, columns are true labels.
        i.e. when labels are [ant, cat]: if cat(row) * ant(column) = 2
        then 2 times we predicted by mistake that a cat is an ant"""
@@ -142,9 +141,14 @@ def print_confusion_matrix(cm, labels):
     precision = tp / (tp + fp)
     recall = tp / (tp + fn)
     f1 = 2 * precision * recall / (precision + recall)
-    l = max([len(str(x)) for x in cm.flatten()])
-    set_printoptions(linewidth=240)
-    _labels = [str(x)[:l].rjust(l) for x in labels]
+
+    l1 = max([len(str(x)) for x in cm.flatten()])
+    l2 = max(map(len, labels))
+    l = min(max(l1, l2), max_print_width)  # format print width
+    def formatter(thing): return '{}'.format(thing)[:l].rjust(l)
+    set_printoptions(linewidth=linewidth, formatter={'int': formatter})
+    _labels = [formatter(x) for x in labels]
+
     _rows = str(cm).split('\n')
     print(' '.join([' '*(l+2)] + _labels))
     for row_label, row in zip(_labels, _rows):
@@ -166,31 +170,29 @@ def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
 
 
 def main():
-    from experiments.data_utils import split
+    from experiments.data_utils import split, unpickle
+    from experiments.ontology.data import transform_ner_dataset, nlp
+
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     log.info('train_ner: starting loading...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.v2.pck'
 
+    # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
     dataset = list(unpickle(dataset_dir + dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=ALL_ENT_CLASSES))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
+    # ts_data = dataset
 
     random.seed(2)
+    log.info('train_ner: starting training...')
+
     model_dir = 'models.v3.2.i10'
     nlp2 = nlp
     # nlp2 = spacy.load('en', path=model_dir)  # continuing training
-
-    log.info('train_ner: starting training...')
-    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
-    save_model(nlp2, model_dir)
-    model_dir = 'models.v3.2.i20'
-    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
-    save_model(nlp2, model_dir)
-    model_dir = 'models.v3.2.i30'
-    train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.0001, tags_complete=True, train_new=False)
-    save_model(nlp2, model_dir)
+    # train_ner(nlp2, tr_data, iterations=10, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
+    # save_model(nlp2, model_dir)
 
     # train_ner(nlp2, tr_data, iterations=100, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
     # model_dir = model_dir[:-1] + str(int(model_dir[-1])+1)
@@ -198,11 +200,9 @@ def main():
 
     print("##### TRAIN DATA #####")
     tr_trues, tr_preds = get_preds(nlp2, tr_data)
-    print("##### TEST DATA #####")
-    ts_trues, ts_preds = get_preds(nlp2, ts_data)
-    print("##### TRAIN DATA #####")
     test_look(tr_trues, tr_preds)
     print("##### TEST DATA #####")
+    ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=True)
     test_look(ts_trues, ts_preds)
 
 
