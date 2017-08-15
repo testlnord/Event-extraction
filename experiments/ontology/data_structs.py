@@ -32,12 +32,13 @@ class RelationRecord:
         assert self.valid_offsets
 
     def __hash__(self):
-        return hash(self.id())
+        return hash(self.id)
 
     def __eq__(self, other):
         return self.id == other.id
 
-    # todo:
+    # todo: is it really okey?
+    @property
     def id(self):
         return (self.article_id, (self.cstart, self.cend),
                 self.s_span, self.o_span, self.triple)

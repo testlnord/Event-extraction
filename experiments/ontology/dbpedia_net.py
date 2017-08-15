@@ -225,33 +225,34 @@ def main():
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
     # todo: load trained NER
-    from experiments.ontology.data import nlp, load_rc_data, load_golden_data
+    from experiments.ontology.data import nlp, load_rc_data
+    from experiments.ontology.tagger import load_golden_data
 
     random.seed(2)
     batch_size = 1
-    epochs = 3
-    model_name = 'noner.dr.noaug.v4.3.notypes'
+    epochs = 4
+    model_name = 'noner.dr.noaug.v4.4'
     sclasses = RC_CLASSES_MAP
     # inverse = RC_INVERSE_MAP
+
     data_dir = '/home/user/datasets/dbpedia/'
+    golden_dir = '/home/user/datasets/dbpedia/rc/golden500/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
-    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True)
-    golden = load_golden_data(sclasses)  # for testing
-
-    assert all(rr is not None for rr in dataset)
-    # dataset = dataset[:5000]
-    train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)
-    nb_negs = len([rr.r for rr in dataset if not rr.r])
-    log.info('data: total: {} (negatives: {}); train: {}; val: {}'.format(len(dataset), nb_negs, len(train_data), len(val_data)))
+    # Load golden-set (test-data), cutting it; load train-set, excluding golden-set from there
+    golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:3000]  # for testing
+    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True,
+                           exclude_records=set(golden))
+    train_data, val_data = dataset, golden  # using golden set as testing set
+    # train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
+    nb_negs = len([rr.r for rr in dataset if not rr.r])
+    log.info('data: total: {} (negatives: {}); train: {}; val: {}'.format(len(dataset), nb_negs, len(train_data), len(val_data)))
 
+    # encoder = DBPediaEncoder(nlp, sclasses)
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
     # encoder = EncoderDataAugmenter(encoder, inverse)
-    encoder = DBPediaEncoder(nlp, sclasses)
-    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
-    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse, augment_data=False, expand_noun_chunks=False)
-    assert len(encoder.vector_length) == encoder.channels
 
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     net.compile2()
@@ -263,7 +264,7 @@ def main():
 
     net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
 
-    test_data = golden
+    test_data = val_data
     hits, misses = eye_test(net, test_data, sclasses)
     print('rights: {} (total: {})'.format(len(hits), len(test_data)))
     # evals = net.evaluate(cycle(val_data), val_steps)
