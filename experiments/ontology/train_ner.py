@@ -3,6 +3,7 @@ import logging as log
 import pathlib
 import random
 
+import spacy
 from spacy.gold import GoldParse
 from spacy.pipeline import EntityRecognizer
 
@@ -105,10 +106,10 @@ def get_preds(updated_nlp, test_data, nil='O', print_=False):
 
 def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
     classes = list(sorted(labels)) + [nil]
-    cm = print_confusion_matrix(y_true=y_true, y_pred=y_pred, labels=classes, max_print_width=7)
+    stat = print_confusion_matrix(y_true=y_true, y_pred=y_pred, labels=classes, max_print_width=7)
     _classes = list(sorted(ALL_ENT_CLASSES)) + [nil]
     _cm = print_confusion_matrix(y_true=y_true, y_pred=y_pred, labels=_classes, max_print_width=7)
-    return cm
+    return stat
 
 
 def main():
@@ -121,31 +122,38 @@ def main():
     log.info('train_ner: starting loading...')
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.v2.pck'
-
     # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
     dataset = list(unpickle(dataset_dir + dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
-                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=20, min_ents_ratio=0.05))
+                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=20, min_ents_ratio=0.02))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
     # ts_data = dataset
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    nlp2 = nlp
+    epochs = 40
+    epoch_size = 5
+    start_epoch = 1  # for proper model saving when continuing training
+
+    nlp2 = nlp  # loading plain spacy model
+    # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)
     # nlp2 = spacy.load('en', path=model_dir)  # continuing training
 
-    epochs = 2
-    iterations = 20
-    for epoch in range(1, epochs + 1):
-        train_ner(nlp2, tr_data, iterations=iterations, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
-        model_dir = 'models.v5.i{}.epoch{}'.format(iterations, epoch)
+    stat_history = []
+    for epoch in range(start_epoch, epochs + start_epoch):
+        train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0.5, learn_rate=0.001, tags_complete=True, train_new=False)
+        model_dir = 'models.v5.5.i{}.epoch{}'.format(epoch_size, epoch)
         save_model(nlp2, model_dir)
 
+        print('train_ner: saved "{}"'.format(model_dir))
         print("##### TRAIN DATA #####")
         tr_trues, tr_preds = get_preds(nlp2, tr_data)
         test_look(tr_trues, tr_preds)
         print("##### TEST DATA #####")
         ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=False)
-        test_look(ts_trues, ts_preds)
+        stat_history.append(test_look(ts_trues, ts_preds))
+
+    for i, stat in enumerate(stat_history):
+        print('epoch #{:3d}; p: {:.2f}; r: {:.2f}; f1: {:.2f}'.format(i, stat['precision'], stat['recall'], stat['f1']))
 
 
 if __name__ == '__main__':

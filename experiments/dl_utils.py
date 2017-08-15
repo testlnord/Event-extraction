@@ -64,3 +64,9 @@ def print_confusion_matrix(y_true, y_pred, labels, max_print_width=12, linewidth
     print('tn: {}; tp: {}; fp: {}; fn: {}'.format(tn, tp, fp, fn))
     print('precision: {}; recall: {}; f1: {}'.format(precision, recall, f1))
     print()
+
+    return {
+        'cm': cm,
+        'tn': tn, 'tp': tp, 'fp': fp, 'fn': fn,
+        'precision': precision, 'recall': recall, 'f1': f1,
+    }
