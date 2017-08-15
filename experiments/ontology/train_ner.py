@@ -115,6 +115,7 @@ def main():
     from experiments.data_utils import split, unpickle
     from experiments.ontology.data import transform_ner_dataset, nlp
 
+    random.seed(2)
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     log.info('train_ner: starting loading...')
@@ -123,28 +124,28 @@ def main():
 
     # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
     dataset = list(unpickle(dataset_dir + dataset_file))
-    dataset = list(transform_ner_dataset(nlp, dataset, allowed_ent_types=NEW_ENT_CLASSES))
+    dataset = list(transform_ner_dataset(nlp, dataset,
+                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=20, min_ents_ratio=0.05))
     tr_data, ts_data = split(dataset, (0.9, 0.1))
     # ts_data = dataset
-
-    random.seed(2)
-    log.info('train_ner: starting training...')
+    log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
     nlp2 = nlp
     # nlp2 = spacy.load('en', path=model_dir)  # continuing training
-    train_ner(nlp2, tr_data, iterations=20, dropout=0., learn_rate=0.001, tags_complete=False, train_new=False)
-    model_dir = 'models.v4.only_new.i20'
-    save_model(nlp2, model_dir)
-    train_ner(nlp2, tr_data, iterations=20, dropout=0., learn_rate=0.001, tags_complete=False, train_new=False)
-    model_dir = 'models.v4.only_new.i40'
-    save_model(nlp2, model_dir)
 
-    print("##### TRAIN DATA #####")
-    tr_trues, tr_preds = get_preds(nlp2, tr_data)
-    test_look(tr_trues, tr_preds)
-    print("##### TEST DATA #####")
-    ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=True)
-    test_look(ts_trues, ts_preds)
+    epochs = 2
+    iterations = 20
+    for epoch in range(1, epochs + 1):
+        train_ner(nlp2, tr_data, iterations=iterations, dropout=0., learn_rate=0.001, tags_complete=True, train_new=False)
+        model_dir = 'models.v5.i{}.epoch{}'.format(iterations, epoch)
+        save_model(nlp2, model_dir)
+
+        print("##### TRAIN DATA #####")
+        tr_trues, tr_preds = get_preds(nlp2, tr_data)
+        test_look(tr_trues, tr_preds)
+        print("##### TEST DATA #####")
+        ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=False)
+        test_look(ts_trues, ts_preds)
 
 
 if __name__ == '__main__':
