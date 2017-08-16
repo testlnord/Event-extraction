@@ -141,6 +141,7 @@ NER_TAGS_LESS = {
 }
 
 
+# On the right should be only known to Spacy entity types (e.g. see NER_TAGS above)
 ENT_MAPPING = {
     "Person": "PERSON",
     "Organisation": "ORG",

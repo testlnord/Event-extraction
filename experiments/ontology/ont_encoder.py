@@ -46,6 +46,7 @@ class DBPediaEncoder:
         self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
+        assert len(self.vector_length) == self.channels
 
     @property
     def channels(self):
@@ -237,6 +238,7 @@ def find_simmetric(dataset):
 
 if __name__ == "__main__":
     import os
+    from experiments.ontology.tagger import load_golden_data
     from experiments.ontology.data import nlp, load_rc_data, filter_context
     from experiments.ontology.data_structs import RelationRecord
     from experiments.data_utils import unpickle
@@ -245,13 +247,6 @@ if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     sclasses = RC_CLASSES_MAP
-    raw_classes1 = list(product(sorted(set(sclasses.values())), [True, False]))
-    raw_classes2 = list(product(sorted(set(sclasses.values())), [True, False]))
-    raw_classes3 = list(product(sorted(set(sclasses.values())), [True, False]))
-    assert all(c1 == c2 == c3 for c1, c2, c3 in zip(raw_classes1, raw_classes2, raw_classes3))
-    exit(0)
-
-
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
