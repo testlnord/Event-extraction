@@ -125,14 +125,17 @@ def main():
     # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
     dataset = list(unpickle(dataset_dir + dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
-                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=20, min_ents_ratio=0.02))
+                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=40, min_ents_ratio=0.04))
+    random.shuffle(dataset)
     tr_data, ts_data = split(dataset, (0.9, 0.1))
     # ts_data = dataset
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 40
+    epochs = 20
     epoch_size = 5
     start_epoch = 1  # for proper model saving when continuing training
+    base_lr = 0.01
+    decay_step = 5  # decay every `decay_step` epochs
 
     nlp2 = nlp  # loading plain spacy model
     # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)
@@ -140,11 +143,12 @@ def main():
 
     stat_history = []
     for epoch in range(start_epoch, epochs + start_epoch):
-        train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0.5, learn_rate=0.001, tags_complete=True, train_new=False)
-        model_dir = 'models.v5.5.i{}.epoch{}'.format(epoch_size, epoch)
+        lr = base_lr * 10 ** -(epoch // decay_step)  # learning rate decay
+        train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0.5, learn_rate=lr, tags_complete=True, train_new=False)
+        model_dir = 'models.v5.4.i{}.epoch{}'.format(epoch_size, epoch)
         save_model(nlp2, model_dir)
+        print('train_ner: epoch: {}/{}; lr: {}; saved "{}"'.format(epoch, epochs, lr, model_dir))
 
-        print('train_ner: saved "{}"'.format(model_dir))
         print("##### TRAIN DATA #####")
         tr_trues, tr_preds = get_preds(nlp2, tr_data)
         test_look(tr_trues, tr_preds)
@@ -153,7 +157,7 @@ def main():
         stat_history.append(test_look(ts_trues, ts_preds))
 
     for i, stat in enumerate(stat_history):
-        print('epoch #{:3d}; p: {:.2f}; r: {:.2f}; f1: {:.2f}'.format(i, stat['precision'], stat['recall'], stat['f1']))
+        print('epoch #{:3d}; p: {:.4f}; r: {:.4f}; f1: {:.4f}'.format(i, stat['precision'], stat['recall'], stat['f1']))
 
 
 if __name__ == '__main__':
