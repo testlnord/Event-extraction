@@ -29,6 +29,8 @@ ds = Dataset(store, default_union=False)
 iri_dbo = 'http://dbpedia.org/ontology'
 iri_dbpedia = 'http://dbpedia.org'
 iri_labels = 'http://dbpedia.org/labels'
+iri_redirects = 'http://dbpedia.org/redirects'
+iri_disamb = 'http://dbpedia.org/disambiguations'
 iri_field = 'field'
 iri_more = 'field:more'
 dbo = Namespace('http://dbpedia.org/ontology/')
@@ -40,6 +42,8 @@ dbr = Namespace('http://dbpedia.org/resource/')
 gdb = ds.get_context(iri_dbpedia)
 gdbo = ds.get_context(iri_dbo)
 glabels = ds.get_context(iri_labels)
+gredirects = ds.get_context(iri_redirects)
+gdisamb = ds.get_context(iri_disamb)
 glo = ReadOnlyGraphAggregate([gdbo, glabels])
 gall = ReadOnlyGraphAggregate([gdb, gdbo])
 gf = ds.get_context(iri_field)
@@ -68,16 +72,36 @@ def raw(uri):
 
 
 @except_safe(EndPointNotFound, HTTPError)
-def get_label(uri):
+def get_label(uri: URIRef):
     t = list(glo.objects(uri, RDFS.label))
     t = raw(uri) if len(t) == 0 else str(t[0])
     return t.split('(')[0].strip(' _')  # remove disambiguations
 
 
 @except_safe(EndPointNotFound, HTTPError)
-def get_type(uri):  # todo: add handling of literal types?
+def get_type(uri: URIRef):  # todo: add handling of literal types?
     t = list(gdb.objects(uri, RDF.type))
     return None if len(t) == 0 else t[0]
+
+
+@except_safe(EndPointNotFound, HTTPError)
+def get_fellow_redirects(uri: URIRef):
+    # Uri can be the target page, to which others are redirected, or it can be itself redirected to something (or both)
+    targets = list(gredirects.objects(subject=uri, predicate=dbo.wikiPageRedirects))
+    if targets:  # if the uri is of the source
+        uri = targets[0]  # then get the other sources (synonyms)
+    sources = list(gredirects.subjects(object=uri, predicate=dbo.wikiPageRedirects))
+    return sources
+
+
+@except_safe(EndPointNotFound, HTTPError)
+def get_fellow_disambiguations(uri: URIRef):
+    # Uri is either the target page, to which others are disambiguated, or it is itself disambiguated to something
+    sources = list(gdisamb.subjects(object=uri, predicate=dbo.wikiPageDisambiguates))
+    if sources:  # if the uri is on of the disambiguations
+        uri = sources[0]  # then get other uris disambiguated from the provided uri
+    targets = list(gdisamb.objects(subject=uri, predicate=dbo.wikiPageDisambiguates))
+    return targets
 
 
 @except_safe(EndPointNotFound, HTTPError)
@@ -139,10 +163,26 @@ def query_raw(q):
     return sparql.query()
 
 
+def test_redirects_disambigs():
+    print('Disambiguates to targets')
+    for uri in get_fellow_disambiguations(dbr.Alien):
+        print(str(uri))
+    print('Disambiguates from sources')
+    for uri in get_fellow_disambiguations(dbr.Alien_Sun):
+        print(str(uri))
+
+    print('Redirects to targets')
+    for uri in get_fellow_redirects(dbr.CDMA):
+        print(str(uri))
+    print('Redirects from sources')
+    for uri in get_fellow_redirects(dbr.Code_division_multiple_access):
+        print(str(uri))
+
+
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    print(NERTypeResolver.final_classes_names)
+    test_redirects_disambigs()
     exit()
 
     # Some simple tests
