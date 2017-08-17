@@ -97,10 +97,10 @@ class NERLinker:
             # If ner type is Person: try all permutations of tokens
             tokens = filter(bool, text.split(' '))
             lprefixes = [self._longest_prefix(' '.join(p))[0] for p in permutations(tokens)]
-            lprefixes = list(filter(None, lprefixes))
+            lprefixes = filter(None, lprefixes)
             lprefix = max(lprefixes, key=len, default=None)
         else:
-            lprefix, _ = _trie.longest_prefix(text)
+            lprefix, _ = self._longest_prefix(text)
 
         if lprefix is not None:
             candidate_sets = _trie.itervalues(prefix=lprefix)
@@ -137,7 +137,7 @@ class NERLinker:
     def load(self, model_dir):
         model_name = type(self).__name__.lower() + '.pck'
         with open(os.path.join(model_dir, model_name), 'rb') as f:
-            self._trie = pickle.load(self._trie, f)
+            self._trie = pickle.load(f)
 
 
 def from_graph(graph):
@@ -151,7 +151,7 @@ def from_crecords(crecords):
             surface_form = ent.text
             if uri and surface_form:
                 surface_form = ent.text.strip(' \n\t,-:;').replace('"', '')
-                surface_form = max(surface_form.split('\n'), key=len)
+                surface_form = max(surface_form.split('\n'), key=len)  # stripping extra lines
                 if len(surface_form) > 0:
                     yield ent.uri, surface_form
 
@@ -184,13 +184,14 @@ def test_pools():
         print('elapsed pool({}): {}'.format(wk, tend - tstart))
 
 
-def main():
+def build_linker():
     from experiments.ontology.sub_ont import gf, gfall, dbr
     from experiments.data_utils import unpickle
 
     base_dir = '/home/user/'
-    project_dir = os.path.join(base_dir, 'Event_extraction', 'experiments')
-    model_dir = os.path.join(project_dir, 'models')
+    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
+    model_dir = os.path.join(project_dir, 'experiments', 'models')
+    assert os.path.isdir(model_dir)
 
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.v2.pck'
@@ -206,6 +207,7 @@ def main():
     ntr = NERTypeResolver()
     linker = NERLinker(ner_type_resolver=ntr)
     for data in [data1, data2]:
+        log.info('linker: updating data ({} records)'.format(len(data)))
         linker.update(data)
         linker.save(model_dir)
 
@@ -217,18 +219,23 @@ def main():
 def try_trie():
     from experiments.ontology.sub_ont import gf, gfall, dbr
 
+    base_dir = '/home/user/'
+    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
+    model_dir = os.path.join(project_dir, 'experiments', 'models')
+
     ntr = NERTypeResolver()
     linker = NERLinker(ner_type_resolver=ntr)
 
     # subjs = list(gfall.subjects(dbr.Microsoft))
-    # subjs = [dbr.Alien, dbr.Microsoft, dbr.JetBrains, dbr.Google]
-    # data = list(zip_longest(subjs, []))
-    data = list(from_graph(gfall))
+    subjs = [dbr.Alien, dbr.Microsoft, dbr.JetBrains, dbr.Google]
+    data = list(zip_longest(subjs, []))
+    # data = list(from_graph(gfall))
 
     print('total entities: {}'.format(len(data)))
     linker.update(data)
     print('total entities: {}'.format(len(data)))
     test_linker(linker)
+    linker.save(model_dir)
 
 
 def test_linker(linker):
@@ -249,4 +256,4 @@ if __name__ == "__main__":
     # test_pools()
     # try_trie()
 
-    main()
+    build_linker()
