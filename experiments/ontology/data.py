@@ -200,7 +200,7 @@ def resolve_relations(art_id, doc, ents_all, graph=gdb):
             if len(r_uris) == 0: r_uris.append('')
             for r_uri in r_uris:
                 yield RelationRecord(s.uri, r_uri, o.uri, s.start, s.end, o.start, o.end,
-                                     sent.text, sent.start_char, sent.end_char, artid=art_id)
+                                     sent.text, sent.start_char, sent.end_char, source_id=art_id)
 
 
 def fuzzfind(doc, *candidates, metric=fuzz.ratio, metric_threshold=82):
@@ -397,6 +397,14 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
         print('total relations locally: {}'.format(total_local))
 
 
+def repickle_rrecords(path):
+    records = list(unpickle(path))
+    with open(path, 'wb') as f:
+        for rr in records:
+            new_record = RelationRecord(rr.subject, rr.relation, rr.object, rr.s0, rr.s1, rr.o0, rr.o1, rr.context, rr.cstart, rr.cend, rr.article_id)
+            pickle.dump(new_record, f)
+
+
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
@@ -409,4 +417,9 @@ if __name__ == "__main__":
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
     # make_dataset(ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+
+    # rc_paths = [rc_out, rc0_out, rc2_out]
+    # for rc_path in rc_paths:
+    #     repickle_rrecords(rc_path)
+
 

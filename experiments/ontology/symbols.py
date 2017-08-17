@@ -207,3 +207,76 @@ RC_INVERSE_MAP = {
     'author': 'product',
     'product': 'author',
 }
+
+
+# With descriptions
+SEMEVAL_CLASSES = {
+    "Cause-Effect": "X is the cause of Y",
+    "Entity-Origin": "Y is the origin of an entity X, and X is coming or derived from that origin.",
+    "Message-Topic": "X is a communicative message containing information about Y",
+    "Product-Producer": "X is a product of Y",
+    "Entity-Destination": "Y is the destination of X in the sense of X moving toward Y",
+    "Member-Collection": "X is a member of Y",
+    "Instrument-Agency": "X is the instrument (tool) of Y or Y uses X",
+    "Component-Whole": "X has an operating or usable purpose within Y",
+    "Content-Container": "X is or was stored or carried inside Y",
+}
+
+
+SEMEVAL_CLASSES_MAPPED = {
+    # "Cause-Effect": "",
+    "Entity-Origin": "location",
+    # "Message-Topic": "",
+    "Product-Producer": "author",
+    # "Entity-Destination": "",
+    # "Member-Collection": "",
+    # "Instrument-Agency": "",
+    "Component-Whole": "parentEntity",
+    # "Content-Container": "",
+}
+
+
+KBP37_CLASSES = {
+    "per:alternate names",
+    "per:origin",
+    "per:spouse",
+    "per:title",
+    "per:employee of",
+    "per:countries of residence",
+    "per:stateorprovinces of residence",
+    "per:cities of residence",
+    "per:country of birth",
+    "org:alternate names",
+    "org:subsidiaries",
+    "org:top members/employees",
+    "org:founded",
+    "org:founded by",
+    "org:country of headquarters",
+    "org:stateorprovince of headquarters",
+    "org:city of headquarters",
+    "org:members",
+    "no relation",
+}
+
+
+KBP37_CLASSES_MAPPED = {
+    # "per:alternate names",
+    # "per:origin",
+    # "per:spouse",
+    # "per:title",
+    "per:employee of": "",  # todo: inverse to keyActor
+    # "per:countries of residence",
+    # "per:stateorprovinces of residence",
+    # "per:cities of residence",
+    # "per:country of birth",
+    # "org:alternate names",
+    "org:subsidiaries": "childEntity",
+    "org:top members/employees": "keyActor",
+    "org:founded": "keyActor",
+    "org:founded by": "keyActor",
+    "org:country of headquarters": "location",
+    "org:stateorprovince of headquarters": "location",
+    "org:city of headquarters": "location",
+    "org:members": "",  # todo: understand
+    # "no relation": None,
+}

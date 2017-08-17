@@ -2,24 +2,18 @@ from intervaltree import Interval
 from rdflib import URIRef
 
 
-class RelationRecord:
-    def __init__(self, s: URIRef, r: URIRef, o: URIRef,
-                 s0: int, s1: int, o0: int, o1: int,
-                 ctext, cstart, cend, artid):
-        # self.s = self.subject = URIRef(s)
-        # self.r = self.relation = URIRef(r)
-        # self.o = self.object = URIRef(o)
-        self.subject = s
-        self.relation = r
-        self.object = o
+class RelRecord:
+    def __init__(self, relation, s0: int, s1: int, o0: int, o1: int,
+                 ctext, cstart=0, cend=None, source_id=None):
+        self.relation = relation
         self.s0 = self.s_start = s0
         self.s1 = self.s_end = s1
         self.o0 = self.o_start = o0
         self.o1 = self.o_end = o1
         self.context = ctext
         self.cstart = cstart
-        self.cend = cend
-        self.article_id = artid
+        self.cend = cend if cend is not None else cstart + len(ctext)
+        self.source_id = source_id if source_id is not None else hash(ctext)
 
     def cut_context(self, begin, end):
         self.context = self.context[begin:end]
@@ -31,18 +25,6 @@ class RelationRecord:
         self.o1 = self.o_end = min(self.o1, self.cend)
         assert self.valid_offsets
 
-    def __hash__(self):
-        return hash(self.id)
-
-    def __eq__(self, other):
-        return self.id == other.id
-
-    # todo: is it really okey?
-    @property
-    def id(self):
-        return (self.article_id, (self.cstart, self.cend),
-                self.s_span, self.o_span, self.triple)
-
     @property
     def direction(self):
         """
@@ -53,12 +35,9 @@ class RelationRecord:
 
     @property
     def valid_offsets(self):
-        return (self.cstart <= self.s_start < self.s_end <= self.cend) and \
-               (self.cstart <= self.o_start < self.o_end <= self.cend) and \
-               disjoint(self.s_span, self.o_span)
-
-    @property
-    def triple(self): return (self.subject, self.relation, self.object)
+        return ((self.cstart <= self.s_start < self.s_end <= self.cend) and
+                (self.cstart <= self.o_start < self.o_end <= self.cend) and
+                disjoint(self.s_span, self.o_span))
 
     @property
     def s_startr(self): return self.s_start - self.cstart  # offsets in dataset are relative to the whole document, not to the sentence
@@ -84,8 +63,39 @@ class RelationRecord:
     @property
     def o_spanr(self): return (self.o_startr, self.o_endr)
 
+    @property
+    def subject_text(self): return self.context[self.s_startr: self.s_endr]
+
+    @property
+    def object_text(self): return self.context[self.o_startr: self.o_endr]
+
+    @property
+    def triple(self): return (self.subject_text, self.relation, self.object_text)
+
+    def __hash__(self): return hash(self.id)
+
+    def __eq__(self, other): return self.id == other.id
+
+    @property
+    def id(self):
+        return (self.source_id, (self.cstart, self.cend),
+                self.s_span, self.o_span, self.triple)
+
     def __str__(self):
         return '\n'.join((' '.join('<{}>'.format(x) for x in self.triple), self.context.strip()))
+
+
+class RelationRecord(RelRecord):
+    def __init__(self, s: URIRef, r: URIRef, o: URIRef,
+                 s0: int, s1: int, o0: int, o1: int,
+                 ctext, cstart=0, cend=None, source_id=None):
+        self.subject = s
+        self.relation = r
+        self.object = o
+        super().__init__(r, s0, s1, o0, o1, ctext, cstart, cend, source_id)
+
+    @property
+    def triple(self): return (self.subject, self.relation, self.object)
 
 
 class EntityRecord:
