@@ -164,37 +164,46 @@ ALL_ENT_CLASSES = NER_TAGS.union(NEW_ENT_CLASSES)
 
 
 RC_CLASSES_MAP = {
-    'http://dbpedia.org/ontology/developer':'author',
-    'http://dbpedia.org/ontology/designer':'author',
-    'http://dbpedia.org/ontology/author':'author',
-    'http://dbpedia.org/ontology/publisher':'author',
-    'http://dbpedia.org/ontology/distributor':'author',
-    'http://dbpedia.org/ontology/knownFor':'knownFor',
-    'http://dbpedia.org/ontology/product':'product',
-    'http://dbpedia.org/ontology/computingPlatform':'computingPlatform',
-    'http://dbpedia.org/ontology/keyPerson':'keyActor',
-    'http://dbpedia.org/ontology/foundedBy':'keyActor',
-    'http://dbpedia.org/ontology/founder':'keyActor',
-    'http://dbpedia.org/ontology/owner':'keyActor',
-    'http://dbpedia.org/ontology/location':'location',
-    'http://dbpedia.org/ontology/locationCity':'location',
-    'http://dbpedia.org/ontology/locationCountry':'location',
-    'http://dbpedia.org/ontology/foundationPlace':'location',
+    'http://dbpedia.org/ontology/developer': 'author',
+    'http://dbpedia.org/ontology/designer': 'author',
+    'http://dbpedia.org/ontology/author': 'author',
+    'http://dbpedia.org/ontology/publisher': 'author',
+    'http://dbpedia.org/ontology/distributor': 'author',
+    'http://dbpedia.org/ontology/knownFor': 'knownFor',
+    'http://dbpedia.org/ontology/product': 'product',
+    'http://dbpedia.org/ontology/computingPlatform': 'computingPlatform',
+    'http://dbpedia.org/ontology/keyPerson': 'keyActor',
+    'http://dbpedia.org/ontology/foundedBy': 'keyActor',
+    'http://dbpedia.org/ontology/founder': 'keyActor',
+    'http://dbpedia.org/ontology/owner': 'keyActor',
+    'http://dbpedia.org/ontology/location': 'location',
+    'http://dbpedia.org/ontology/locationCity': 'location',
+    'http://dbpedia.org/ontology/locationCountry': 'location',
+    'http://dbpedia.org/ontology/foundationPlace': 'location',
 }
 
 
 RC_CLASSES_MAP_MORE = {
-    'http://dbpedia.org/ontology/parentCompany':'parentEntity',
-    'http://dbpedia.org/ontology/owningCompany':'parentEntity',
-    'http://dbpedia.org/ontology/predecessor':'parentEntity',
-    'http://dbpedia.org/ontology/subsidiary':'childEntity',
-    'http://dbpedia.org/ontology/division':'childEntity',
-    'http://dbpedia.org/ontology/successor':'childEntity',
+    'http://dbpedia.org/ontology/parentCompany': 'parentEntity',
+    'http://dbpedia.org/ontology/owningCompany': 'parentEntity',
+    'http://dbpedia.org/ontology/predecessor': 'parentEntity',
+    'http://dbpedia.org/ontology/subsidiary': 'childEntity',
+    'http://dbpedia.org/ontology/division': 'childEntity',
+    'http://dbpedia.org/ontology/successor': 'childEntity',
 }
 
 
 RC_CLASSES_MAP_ALL = RC_CLASSES_MAP.copy()
 RC_CLASSES_MAP_ALL.update(RC_CLASSES_MAP_MORE)
 
+
 RC_CLASSES = set(RC_CLASSES_MAP.values())
 RC_CLASSES_ALL = set(RC_CLASSES_MAP_ALL.values())
+
+# keyActor and parentEntity are similar sometimes
+RC_INVERSE_MAP = {
+    'childEntity': 'parentEntity',
+    'parentEntity': 'childEntity',
+    'author': 'product',
+    'product': 'author',
+}
