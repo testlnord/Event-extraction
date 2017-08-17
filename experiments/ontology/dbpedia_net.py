@@ -229,9 +229,9 @@ def print_tested(crecord, sdp, tops, true_rel_with_dir):
 
 def main():
     import os
-    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL
+    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
     from experiments.data_utils import unpickle, split, visualise
-    from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderWithEntTypes, EncoderDataAugmenter
+    from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderWithEntTypes
 
     # import spacy
     # nlp = spacy.load('en')  # it is imported from other files for now
@@ -241,21 +241,24 @@ def main():
 
     random.seed(2)
     batch_size = 1
-    epochs = 4
-    model_name = 'noner.dr.noaug.nc.v4.4'
-    sclasses = RC_CLASSES_MAP
-    # inverse = RC_INVERSE_MAP
+    epochs = 3
+    model_name = 'noner.dr.noaug.v4.4.all.inv'
+    sclasses = RC_CLASSES_MAP_ALL
+    inverse = RC_INVERSE_MAP
 
     data_dir = '/home/user/datasets/dbpedia/'
     golden_dir = '/home/user/datasets/dbpedia/rc/golden500/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+
     # Load golden-set (test-data), cutting it; load train-set, excluding golden-set from there
-    golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:4000]  # for testing
-    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True,
-                           exclude_records=set(golden))
-    train_data, val_data = dataset, golden  # using golden set as testing set
-    # train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
+    # golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:4000]  # for testing
+    # exclude = golden
+    exclude = set()
+    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True, exclude_records=exclude)
+    # train_data, val_data = dataset, golden  # using golden set as testing set
+    train_data, val_data = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
+
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
     nb_negs = len([rr for rr in dataset if not rr.relation])
@@ -264,9 +267,8 @@ def main():
              .format(len(dataset), nb_negs, len(train_data), len(val_data), nb_negs_val))
 
     # Loading encoder
-    # encoder = DBPediaEncoder(nlp, sclasses)
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, expand_noun_chunks=True)
-    # encoder = EncoderDataAugmenter(encoder, inverse)
+    # encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse)
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
 
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
@@ -280,8 +282,9 @@ def main():
     net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
 
     test_data = val_data
-    hits, misses = eye_test(net, test_data, sclasses)
-    print('rights: {} (total: {})'.format(len(hits), len(test_data)))
+    prob_threshold = 0.5
+    hits, misses = eye_test(net, test_data, sclasses, prob_threshold=prob_threshold)
+    print('rights: {}/{} with prob_threshold={}'.format(len(hits), len(test_data), prob_threshold))
     # evals = net.evaluate(cycle(val_data), val_steps)
     # print('evaluated: {}'.format(evals))
 

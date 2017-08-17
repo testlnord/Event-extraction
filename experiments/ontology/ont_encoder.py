@@ -23,7 +23,7 @@ def crecord2spans(crecord, nlp):
 
 
 class DBPediaEncoder:
-    def __init__(self, nlp, superclass_map,
+    def __init__(self, nlp, superclass_map, inverse_relations=None,
                  expand_context=1, expand_noun_chunks=False):
         """
         Encodes the data into the suitable for the Keras format. Uses Shortest Dependency Tree (SDP) assumption.
@@ -34,12 +34,22 @@ class DBPediaEncoder:
         """
         self.nlp = nlp
         self.classes = superclass_map
+        self._inverse_map = dict()
+
         # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
-        # self.tags = CategoricalTags(set(self.classes.values()), default_tag='')
-        # self.direction_tags = CategoricalTags({None, True, False})  # None for negative relations (they have no direction)
         raw_classes = list(product(sorted(set(self.classes.values())), [True, False]))
+        if inverse_relations:
+            for rx, ry in inverse_relations.items():
+                # Map each class to its' inverse (with changed direction, of course)
+                #   if it and its' inverse are in the domain (in raw_classes)
+                x, y = (rx, False), (ry, True)
+                if x in raw_classes and y in raw_classes:
+                    self._inverse_map[x] = y
+                    raw_classes.remove(x)
+                    log.info('DBPediaEncoder: map class to inverse: {}->{}'.format(x, y))
         log.info('DBPediaEncoder: classes: {}'.format(raw_classes))
         self.tags = CategoricalTags(raw_classes, default_tag=(None, None))
+
         self.iob_tags = CategoricalTags(sorted(IOB_TAGS))
         self.ner_tags = CategoricalTags(sorted(NER_TAGS), default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(sorted(POS_TAGS))
@@ -113,12 +123,12 @@ class DBPediaEncoder:
         :param r: relation (of type: str)
         :return: tuple of (one-hot vector of categories, direction of the s->o relation)
         """
-        raw_cls = self.classes.get(str(crecord.r))
+        rel_cls = self.classes.get(str(crecord.r))
         # NB: raw_cls may be None (filtered by self.classes), but still have specified direction, so we get (None, True) or (None, False)
-        cls = self.tags.encode((raw_cls, crecord.direction))
-        return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode()
-        # direction = self.direction_tags.encode(crecord.direction)
-        # return np.array(cls), direction
+        raw_cls = (rel_cls, crecord.direction)
+        raw_cls = self._inverse_map.get(raw_cls, raw_cls)
+        cls = self.tags.encode(raw_cls)
+        return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode() todo: remove
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
@@ -188,6 +198,7 @@ class DBPediaEncoderBranched(DBPediaEncoder):
         return left_part + right_part
 
 
+# deprecated todo: change or remove
 class EncoderDataAugmenter:
     """Wrapper of DBPediaEncoder for data augmentation."""
     def __init__(self, encoder, inverse_map):
@@ -242,23 +253,30 @@ if __name__ == "__main__":
     from experiments.ontology.data import nlp, load_rc_data, filter_context
     from experiments.ontology.data_structs import RelationRecord
     from experiments.data_utils import unpickle
-    from experiments.ontology.symbols import RC_CLASSES_MAP
+    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    sclasses = RC_CLASSES_MAP
+    sclasses = RC_CLASSES_MAP_ALL
+    inverse = RC_INVERSE_MAP
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
+    # Test inverse things
+    for rx, ry in inverse.items():
+        x = (rx, False)
+        y = (ry, True)
+        log.info('testing encoder inverse: {}->{}'.format(x, y))
+        ximage = encoder._inverse_map.get(x, x)
+        assert ximage == y, 'encoder._inverse_map({}) != {}'.format(x, y)
+        _x = encoder.tags.encode(ximage)
+        _y = encoder.tags.encode(y)
+        assert _x == _y, '{} != {}'.format(_x, _y)
+    exit()
+
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
     print('total with filtered classes:', len(dataset))
-
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses)
-    c = encoder.channels
-    assert len(encoder.vector_length) == encoder.channels
-
-    # find_simmetric(dataset)
-    # exit()
 
     dataset = list(unpickle(rc_out))
     _valid = [rr for rr in dataset if rr.valid_offsets]
