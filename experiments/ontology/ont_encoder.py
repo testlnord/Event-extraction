@@ -9,12 +9,6 @@ from experiments.ontology.symbols import POS_TAGS, DEP_TAGS, IOB_TAGS, NER_TAGS
 from experiments.nlp_utils import *
 
 
-def transform_lists(text):
-    rex = '^- +'  # todo: why it doesn't work?
-    # group all subsequent '-' lines; make from them comma-list
-    # using previous Section name or previous sentence (especially if it ends on colon)
-
-
 def crecord2spans(crecord, nlp):
     return chars2spans(nlp(crecord.context), crecord.s_spanr, crecord.o_spanr)
 
@@ -41,12 +35,13 @@ class DBPediaEncoder:
         if inverse_relations:
             for rx, ry in inverse_relations.items():
                 # Map each class to its' inverse (with changed direction, of course)
-                #   if it and its' inverse are in the domain (in raw_classes)
+                #   if at least its' inverse is in the domain (in raw_classes)
                 x, y = (rx, False), (ry, True)
-                if x in raw_classes and y in raw_classes:
+                if y in raw_classes:
                     self._inverse_map[x] = y
-                    raw_classes.remove(x)
                     log.info('DBPediaEncoder: map class to inverse: {}->{}'.format(x, y))
+                if x in raw_classes:
+                    raw_classes.remove(x)
         log.info('DBPediaEncoder: classes: {}'.format(raw_classes))
         self.tags = CategoricalTags(raw_classes, default_tag=(None, None))
 
@@ -117,17 +112,20 @@ class DBPediaEncoder:
         data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors
         return tuple(map(np.array, data))
 
+    def encode_raw_class(self, crecord):
+        rel_cls = self.classes.get(str(crecord.relation))
+        # NB: raw_cls may be None (filtered by self.classes), but still have specified direction, so we get (None, True) or (None, False)
+        raw_cls = (rel_cls, crecord.direction)
+        raw_cls = self._inverse_map.get(raw_cls, raw_cls)
+        return raw_cls
+
     def encode_class(self, crecord):
         """
         Encode relation by numeric values.
         :param r: relation (of type: str)
         :return: tuple of (one-hot vector of categories, direction of the s->o relation)
         """
-        rel_cls = self.classes.get(str(crecord.r))
-        # NB: raw_cls may be None (filtered by self.classes), but still have specified direction, so we get (None, True) or (None, False)
-        raw_cls = (rel_cls, crecord.direction)
-        raw_cls = self._inverse_map.get(raw_cls, raw_cls)
-        cls = self.tags.encode(raw_cls)
+        cls = self.tags.encode(self.encode_raw_class(crecord))
         return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode() todo: remove
 
     def encode(self, crecord):
@@ -251,7 +249,7 @@ if __name__ == "__main__":
     import os
     from experiments.ontology.tagger import load_golden_data
     from experiments.ontology.data import nlp, load_rc_data, filter_context
-    from experiments.ontology.data_structs import RelationRecord
+    from experiments.ontology.data_structs import RelationRecord, RelRecord
     from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
 
@@ -260,17 +258,6 @@ if __name__ == "__main__":
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-    # Test inverse things
-    for rx, ry in inverse.items():
-        x = (rx, False)
-        y = (ry, True)
-        log.info('testing encoder inverse: {}->{}'.format(x, y))
-        ximage = encoder._inverse_map.get(x, x)
-        assert ximage == y, 'encoder._inverse_map({}) != {}'.format(x, y)
-        _x = encoder.tags.encode(ximage)
-        _y = encoder.tags.encode(y)
-        assert _x == _y, '{} != {}'.format(_x, _y)
-    exit()
 
     data_dir = '/home/user/datasets/dbpedia/'
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')

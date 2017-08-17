@@ -179,7 +179,7 @@ class DBPediaNet(SequenceNet):
         return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension
 
 
-def eye_test(net, crecords, sclasses_map, prob_threshold=0.5):
+def eye_test(net, crecords, prob_threshold=0.5):
     misses = []
     hits = []
     trues = []
@@ -187,8 +187,7 @@ def eye_test(net, crecords, sclasses_map, prob_threshold=0.5):
     for tops, crecord in zip(net.predict_crecords(crecords, topn=3), crecords):
         _ = list(net._encoder.encode(crecord))  # to get the sdp
         sdp = net._encoder.last_sdp
-        true_rel = sclasses_map.get(str(crecord.relation))
-        true_rel_with_dir = (true_rel, crecord.direction)
+        true_rel_with_dir = net._encoder.encode_raw_class(crecord)
         _struct = (crecord, sdp, tops, true_rel_with_dir)
         if any(prob >= prob_threshold and true_rel_with_dir == rel_with_dir for icls, prob, rel_with_dir in tops):
             hits.append(_struct)
@@ -241,7 +240,7 @@ def main():
 
     random.seed(2)
     batch_size = 1
-    epochs = 3
+    epochs = 2
     model_name = 'noner.dr.noaug.v4.4.all.inv'
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
@@ -271,10 +270,11 @@ def main():
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
 
     # Instantiating new net or loading existing
-    net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile2()
-    # model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 3)
-    # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    # net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
+    # net.compile2()
+    model_path = 'dbpedianet_model_{}_full_epochsize{}_epoch{:02d}.h5'.format(model_name, train_steps, 2)
+    net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
+    model_name += '.i2'
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
@@ -283,10 +283,10 @@ def main():
 
     test_data = val_data
     prob_threshold = 0.5
-    hits, misses = eye_test(net, test_data, sclasses, prob_threshold=prob_threshold)
+    hits, misses = eye_test(net, test_data, prob_threshold=prob_threshold)
     print('rights: {}/{} with prob_threshold={}'.format(len(hits), len(test_data), prob_threshold))
-    # evals = net.evaluate(cycle(val_data), val_steps)
-    # print('evaluated: {}'.format(evals))
+    evals = net.evaluate(cycle(val_data), val_steps)
+    print('evaluated: {}'.format(evals))
 
 
 if __name__ == "__main__":
