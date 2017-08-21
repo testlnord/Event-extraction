@@ -1,5 +1,6 @@
 import logging as log
 import os
+import random
 from math import floor
 import pickle
 from collections import defaultdict, namedtuple
@@ -8,11 +9,11 @@ from itertools import permutations, chain, zip_longest
 from multiprocessing import Pool
 from concurrent.futures import ProcessPoolExecutor
 
+import spacy
 from rdflib.namespace import RDF, RDFS
 from pygtrie import StringTrie, CharTrie
 from cytoolz import groupby, first, second
 from fuzzywuzzy import fuzz
-
 
 from experiments.ontology.sub_ont import NERTypeResolver
 from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo
@@ -25,12 +26,14 @@ class NERLinker:
     """
     Disambiguates named entities and stores new unknown if they satisfy type restrictions.
     """
-    def __init__(self, ner_type_resolver, metric_threshold=0.8):
+    def __init__(self, ner_type_resolver=NERTypeResolver(),
+                 metric_threshold=0.8, strict_type_match=True):
         self.ntr = ner_type_resolver
 
         # Init storage
         self._trie = CharTrie()
         self._metric_threshold = metric_threshold
+        self._strict_type_match = strict_type_match
 
     def update(self, uri_sf_pairs):
         """
@@ -96,13 +99,14 @@ class NERLinker:
         if span.label_ == 'PERSON':
             # If ner type is Person: try all permutations of tokens
             tokens = filter(bool, text.split(' '))
-            lprefixes = [self._longest_prefix(' '.join(p))[0] for p in permutations(tokens)]
-            lprefixes = filter(None, lprefixes)
+            lprefixes = [self._longest_prefix(' '.join(p)) for p in permutations(tokens)]
+            lprefixes = filter(bool, lprefixes)
             lprefix = max(lprefixes, key=len, default=None)
         else:
-            lprefix, _ = self._longest_prefix(text)
+            lprefix = self._longest_prefix(text)
 
         if lprefix is not None:
+            # log.info('span: "{}"; found prefix: "{}"'.format(span, lprefix))
             candidate_sets = _trie.itervalues(prefix=lprefix)
             candidates = list(chain.from_iterable(candidate_sets))
             if len(candidates) > 0:
@@ -110,20 +114,35 @@ class NERLinker:
 
     def _fuzzy_search(self, span, candidates, metric=fuzz.ratio):
         """
-
         :param span: spacy.token.Span
         :param candidates: List[TrieEntry]
+        :param metric:
         :return: best-matching URIRef or None
         """
-        typed = groupby(lambda entry: entry.type == span.label_, candidates)
+        # todo: avoid certain types (cardinal, DATE, etc.)
+        typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
+        search_in = [True]
+        if not self._strict_type_match:
+            search_in.append(False)  # todo: maybe allow only exact matches in that case?
+
         # Search with the same type first
-        for is_same_type in [True, False]:
-            _candidates = typed.get(is_same_type)
-            if _candidates:
-                measured = [(metric(entry.sf, span.text), entry) for entry in candidates]
-                m, entry = max(measured, key=second)
-                if m > self._metric_threshold * 100:
-                    return entry.uri
+        for is_same_type in search_in:
+            typed_candidates = typed.get(is_same_type)
+            if typed_candidates:
+                similar = groupby(lambda entry: metric(entry.sf, span.text), typed_candidates)  # group by val of metric
+                best_m = sorted([m for m in similar if m >= self._metric_threshold * 100], reverse=True)
+
+                # todo: some more checks on the best matches if there's not the only one?
+                # best_match_groups = [[ent.uri for ent in similar[m]] for m in best_m]
+                # if best_match_groups:
+                #     best_matches = best_match_groups[0]
+
+                best_matches = [ent.uri for m in best_m for ent in similar[m]]
+                # Get all synonyms in trie for these particular found candidates; calc weighted similarity to all of these synonyms
+                if len(best_matches) > 1:
+                    pass
+                elif len(best_matches) == 1:
+                    return best_matches[0]
 
     # todo:
     def add_ent(self, new_ent):
@@ -184,15 +203,9 @@ def test_pools():
         print('elapsed pool({}): {}'.format(wk, tend - tstart))
 
 
-def build_linker():
+def build_linker(linker, model_dir):
     from experiments.ontology.sub_ont import gf, gfall, dbr
     from experiments.data_utils import unpickle
-
-    base_dir = '/home/user/'
-    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
-    model_dir = os.path.join(project_dir, 'experiments', 'models')
-    assert os.path.isdir(model_dir)
-
     dataset_dir = '/home/user/datasets/dbpedia/ner/'
     dataset_file = 'crecords.v2.pck'
     crecords = list(unpickle(dataset_dir + dataset_file))
@@ -204,16 +217,13 @@ def build_linker():
     graph = gfall
     data2 = list(from_graph(graph))
 
-    ntr = NERTypeResolver()
-    linker = NERLinker(ner_type_resolver=ntr)
     for data in [data1, data2]:
         log.info('linker: updating data ({} records)'.format(len(data)))
         linker.update(data)
         linker.save(model_dir)
-
-    test_linker(linker)
-    linker.load(model_dir)
-    test_linker(linker)
+    test_linker_trie(linker)
+    # linker.load(model_dir)
+    # test_linker_trie(linker)
 
 
 def try_trie():
@@ -234,11 +244,11 @@ def try_trie():
     print('total entities: {}'.format(len(data)))
     linker.update(data)
     print('total entities: {}'.format(len(data)))
-    test_linker(linker)
+    test_linker_trie(linker)
     linker.save(model_dir)
 
 
-def test_linker(linker):
+def test_linker_trie(linker):
     trie = linker._trie
     entry_sets = list(trie.itervalues())
     all_entries = set(chain.from_iterable(entry_sets))
@@ -249,11 +259,52 @@ def test_linker(linker):
     assert total_unique_entries == total_entries
 
 
+def test_linker(linker):
+    from experiments.ontology.sub_ont import get_article, dbr, raw
+
+    # from experiments.ontology.data import nlp
+    model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
+    # model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
+    model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
+    model_path = os.path.join(model_dir, model_name)
+    nlp = spacy.load('en', path=model_path)
+
+    titles = [dbr.JetBrains, dbr.Microsoft_Windows]
+    for i, title in enumerate(titles):
+        print('\n')
+        print(i, str(title))
+        article = get_article(title)
+        text = nlp(article['text'])
+        prev_sent = ''
+        for ent in text.ents:
+            sent_text = ent.sent.text.strip()
+            if sent_text != prev_sent:
+                print()
+                print(sent_text)
+                prev_sent = sent_text
+
+            uris = linker.get_uri(ent)
+            uris_str = uris and '; '.join(map(raw, uris)) or uris
+            print('({}:{}) ({}) <{}> is [{}]'.format(ent.start, ent.end, ent.label_, ent.text, uris_str))
+            # print('({}:{}) ({}) <{}> is <{}>'.format(ent.start, ent.end, ent.label_, ent.text, str(uri)))
+
+
 if __name__ == "__main__":
     from experiments.ontology.data_structs import ContextRecord, EntityRecord  # for unpickle()
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    base_dir = '/home/user/'
+    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
+    model_dir = os.path.join(project_dir, 'experiments', 'models')
+    assert os.path.isdir(model_dir)
+
+    ntr = NERTypeResolver()
+    linker = NERLinker(ner_type_resolver=ntr, metric_threshold=0.8, strict_type_match=False)
+
+    # build_linker(linker, model_dir)
+
+    linker.load(model_dir)
+    test_linker(linker)
+
     # test_pools()
     # try_trie()
-
-    build_linker()
