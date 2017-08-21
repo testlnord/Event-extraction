@@ -1,4 +1,7 @@
 import logging as log
+from collections import defaultdict
+from pprint import pprint
+
 from spacy.en import English
 
 from experiments.ner_tagging.ner_net import NERNet
@@ -26,47 +29,75 @@ def load_default_ner_net(model_path=None, batch_size=16):
     return ner_net
 
 
-def print_confusion_matrix(y_true, y_pred, labels, max_print_width=12, linewidth=240):
+def print_confusion_matrix(y_true, y_pred, labels, max_print_width=12):
     """
     Rows are predictions, columns are true labels.
     i.e. when labels are [ant, cat]: if cat(row) * ant(column) = 2
     then 2 times we predicted by mistake that a cat is an ant.
+    It is assumed that the negative class comes last.
     :param y_true:
     :param y_pred:
     :param labels: entries of y_true & y_pred
     :param max_print_width:
-    :param linewidth:
     :return: confusion matrix (numpy.ndarray)
     """
-    from numpy import set_printoptions
-    from sklearn.metrics import confusion_matrix
+    import numpy as np
+    from sklearn.metrics import confusion_matrix, classification_report
     cm = confusion_matrix(y_true=y_true, y_pred=y_pred, labels=labels)
 
-    fp = cm[:-1, -1].sum()  # negatives, classified as positives
-    fn = cm[-1, :-1].sum()  # positives, classified as negatives
-    tp = sum([cm[i, i] for i in range(len(cm)-1)])
-    tn = cm[-1, -1]
-    precision = tp / (tp + fp)
-    recall = tp / (tp + fn)
-    f1 = 2 * precision * recall / (precision + recall)
+    total = cm.sum()
+    assert total
+    accuracy = cm.trace() / total
+    cls_results = {}
+    for i, label in enumerate(labels):
+        # class_weight = cm[:, i].sum() / total  # fraction of this class from total
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        precision = tp / (tp + fp)
+        recall = tp / (tp + fn)
+        f1 = 2 * precision * recall / (precision + recall)
+        cls_results[label] = {
+            'tp': tp, 'fp': fp, 'fn': fn,
+            'precision': precision, 'recall': recall, 'f1': f1,
+        }
 
     l1 = max([len(str(x)) for x in cm.flatten()])
     l2 = max(map(len, labels))
     l = min(max(l1, l2), max_print_width)  # format print width
     def formatter(thing): return '{}'.format(thing)[:l].rjust(l)
-    set_printoptions(linewidth=linewidth, formatter={'int': formatter})
     _labels = [formatter(x) for x in labels]
+    _label_str = ' '.join([' '*(l+2)] + _labels)
+    linewidth = len(_label_str) + l + 2
+    old_opts = np.get_printoptions()
+    np.set_printoptions(linewidth=linewidth, formatter={'int': formatter}, threshold=np.inf)
 
+    # Print confusion matrix
+    print(_label_str)
     _rows = str(cm).split('\n')
-    print(' '.join([' '*(l+2)] + _labels))
     for row_label, row in zip(_labels, _rows):
         print(row_label, row)
-    print('tn: {}; tp: {}; fp: {}; fn: {}'.format(tn, tp, fp, fn))
-    print('precision: {}; recall: {}; f1: {}'.format(precision, recall, f1))
-    print()
 
-    return {
-        'cm': cm,
-        'tn': tn, 'tp': tp, 'fp': fp, 'fn': fn,
-        'precision': precision, 'recall': recall, 'f1': f1,
-    }
+    # Print metrics for all classes
+    print()
+    print(classification_report(y_true=y_true, y_pred=y_pred, labels=labels))
+    print('accuracy: {}'.format(accuracy))
+
+    # Print metrics for all classes
+    # for label in labels:
+    #     metrics = cls_results[label]
+    #     print('{}: f1:{f1:.3f} prec:{precision:.3f} recall:{recall:.3f} tp:{tp} fp:{fp} fn:{fn}'
+    #           .format(formatter(label), **metrics))
+
+    # all_metrics = defaultdict(list)
+    # for label, metrics in cls_results.items():
+    #     for metric, value in metrics.items():
+    #         all_metrics[metric].append(value)
+    # macro = {}
+    # for metric, vals in all_metrics.items():
+    #     macro[metric] = sum(vals) / len(vals)
+    # print('macro measures:')
+    # pprint(macro)
+
+    np.set_printoptions(**old_opts)  # restore numpy printoptions
+    return accuracy, cls_results
