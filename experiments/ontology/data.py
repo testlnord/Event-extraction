@@ -9,7 +9,6 @@ from copy import copy
 from itertools import permutations, islice
 from multiprocessing import Pool
 
-import spacy
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 from cytoolz import groupby
 from fuzzywuzzy import fuzz
@@ -18,15 +17,8 @@ from intervaltree import IntervalTree
 from experiments.data_utils import unpickle
 from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord
 from experiments.ontology.linker import NERTypeResolver
-from experiments.ontology.sub_ont import dbo, dbr
+from experiments.ontology.sub_ont import dbo, dbr, gf, gdb
 from experiments.ontology.sub_ont import get_article, get_label
-from experiments.ontology.sub_ont import gf, gdb
-
-
-nlp = spacy.load('en_core_web_sm')  # 'sm' for small
-# from experiments.utils import load_nlp
-# nlp = load_nlp()
-# nlp = load_nlp(batch_size=32)
 
 
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
@@ -352,6 +344,8 @@ def repickle_rrecords(path):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
     from experiments.ontology.config import config
+    import spacy
+    nlp = spacy.load(**config['models']['nlp'])
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
