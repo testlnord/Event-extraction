@@ -220,7 +220,11 @@ SEMEVAL_CLASSES = {
     "Instrument-Agency": "X is the instrument (tool) of Y or Y uses X",
     "Component-Whole": "X has an operating or usable purpose within Y",
     "Content-Container": "X is or was stored or carried inside Y",
+    # "Other": "No relation",
 }
+
+
+SEMEVAL_CLASSES_MAP = {c: c for c in SEMEVAL_CLASSES}
 
 
 SEMEVAL_CLASSES_MAPPED = {
@@ -237,26 +241,29 @@ SEMEVAL_CLASSES_MAPPED = {
 
 
 KBP37_CLASSES = {
-    "per:alternate names",
+    "per:alternate_names",
     "per:origin",
     "per:spouse",
     "per:title",
-    "per:employee of",
-    "per:countries of residence",
-    "per:stateorprovinces of residence",
-    "per:cities of residence",
-    "per:country of birth",
-    "org:alternate names",
+    "per:employee_of",
+    "per:countries_of_residence",
+    "per:stateorprovinces_of_residence",
+    "per:cities_of_residence",
+    "per:country_of_birth",
+    "org:alternate_names",
     "org:subsidiaries",
-    "org:top members/employees",
+    "org:top_members/employees",
     "org:founded",
-    "org:founded by",
-    "org:country of headquarters",
-    "org:stateorprovince of headquarters",
-    "org:city of headquarters",
+    "org:founded_by",
+    "org:country_of_headquarters",
+    "org:stateorprovince_of_headquarters",
+    "org:city_of_headquarters",
     "org:members",
-    "no relation",
+    # "no_relation",  # anyway will be mapped to default
 }
+
+
+KBP37_CLASSES_MAP = {c: c for c in KBP37_CLASSES}
 
 
 KBP37_CLASSES_MAPPED = {

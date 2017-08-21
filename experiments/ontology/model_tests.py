@@ -10,10 +10,11 @@ def process_record(text):
     lines = list(filter(None, text.split('\n')))
     data, rel = lines[:2]  # omitting 'Comment:' field if it is present
     rels = rel.split('(')
-    rel = rels[0]
-    direction = None
     if len(rels) > 1:
+        rel = rels[0]
         direction = rels[1][:2] == 'e1'
+    else:  # there's no direction, so, relation is None (NB: ad-hoc for these 2 datasets)
+        direction = rel = None  # designates absence of relation between entities
 
     unquoted = data.split('"')
     i = int(unquoted[0].strip())  # number of data record
@@ -69,7 +70,7 @@ if __name__ == "__main__":
     filenames = ['train', 'test', 'dev']
     ext = '.txt'
     for filename in filenames:
-        input_path = os.path.join(kbp_dir, filename + '.txt')
+        input_path = os.path.join(kbp_dir, filename + ext)
         output_path = os.path.join(kbp_dir, filename + '.pck')
         preprocess(input_path, output_path)
 
