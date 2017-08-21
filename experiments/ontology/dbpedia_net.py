@@ -1,44 +1,32 @@
 import logging as log
+from itertools import cycle
 
 import numpy as np
 from keras.models import Model
-from keras.layers import Dense, LSTM, Input, Concatenate, TimeDistributed, Bidirectional, MaxPool1D, Dropout
+from keras.layers import Dense, LSTM, Input, Concatenate, TimeDistributed, Bidirectional, MaxPooling1D, Dropout, GlobalMaxPooling1D
 
 from experiments.sequencenet import SequenceNet
 
 
 class DBPediaNet(SequenceNet):
-    def compile1(self):
-        xlens = self._encoder.vector_length
-
-        dr = 0.5
-        rdr = 0.5
-
-        inputs = [Input(shape=(None, xlen)) for xlen in xlens]
-        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
-        lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
-        lstms3 = [LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
-
-        # todo: add dropout to dense?
-        last = Concatenate(axis=-1)(lstms3)
-        output = Dense(self.nbclasses, activation='softmax')(last)
-
-        self._model = Model(inputs=inputs, outputs=[output])
-        # self._model.compile(loss='categorical_crossentropy', optimizer='adam', sample_weight_mode='temporal')  # sample_weight_mode??
-        self._model.compile(loss='categorical_crossentropy', optimizer='adam')
-
-    def get_model2(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
+    def get_model2old(self, dr=0.5, rdr=0.5):
         input_lens = self._encoder.vector_length
+        min_units=16
+        max_units = 128
 
         inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
-        xlens = [max(min_units, xlen) for xlen in input_lens]  # more units for simpler channels
+        # Add embedding if the input length is too large
+        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
+                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
+        # Make more units for smaller channels and cut too large channels
+        xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
+
         # todo: add inputs from previous final_dense to next layer's lstm?
-        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
+        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
         lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
         lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
 
         all_lstms = [lstms1, lstms2, lstms3]
-        # aux_lstms2 = [LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
         all_aux_lstms = [[LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm, xlen in zip(lstms, xlens)] for lstms in all_lstms]
 
         # todo: add dropout to dense?
@@ -46,29 +34,77 @@ class DBPediaNet(SequenceNet):
 
         return inputs, auxs
 
-    def compile2(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
-        inputs, auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
+    def get_model2(self, dr=0.5, rdr=0.5):
+        input_lens = self._encoder.vector_length
+        min_units = 32
+        # max_units = 128
+        max_units = 9999
 
-        denses = [Dense(aux_dense_units, activation='sigmoid')(aux) for aux in auxs]
-        last = Concatenate()(denses)
+        inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
+        # Add embedding if the input length is too large
+        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
+                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
+        # Make more units for smaller channels and cut too large channels
+        xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
+        total_units = sum(xlens)
+
+        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
+        lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
+        lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
+
+        aux_lstms = [Concatenate()(lstm) for lstm in [lstms1, lstms2, lstms3]]
+        # aux_lstms = [GlobalMaxPooling1D()(mlstm) for mlstm in aux_lstms]
+        aux_lstms = [MaxPooling1D(pool_size=2)(mlstm) for mlstm in aux_lstms]
+        aux_lstms = [LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm in aux_lstms]
+        aux_lstms = [MaxPooling1D(pool_size=2)(lstm) for lstm in aux_lstms]
+
+        return inputs, aux_lstms
+
+    def compile2(self, aux_dense_units=256, dr=0.5, rdr=0.5):
+        inputs, lasts = self.get_model2(dr, rdr)
+
+        lasts = [Dense(aux_dense_units, activation='sigmoid')(l) for l in lasts]
+        last = Concatenate()(lasts)
         output = Dense(self.nbclasses, activation='softmax', name='output')(last)
 
-        # Multiple outputs
-        # todo: abstract num classes (i.e. num of direction classes (not binary, but categorical crossentropy))
-        # direction_output = Dense(3, activation='sigmoid', name='direction_output')(last)
-        # self._model = Model(inputs=inputs, outputs=[output, direction_output])
-        # self._model.compile(optimizer='adam',
-        #                     loss={'output': 'categorical_crossentropy', 'direction_output': 'categorical_crossentropy'},
-        #                     loss_weights={'output': 1, 'direction_output': 10})
-
-        # Single output
         self._model = Model(inputs=inputs, outputs=[output])
-        self._model.compile(loss='categorical_crossentropy', optimizer='adam')
+        self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
-    def compile4(self, min_units=16, aux_dense_units=256, dr=0.5, rdr=0.5):
+    def compile3(self, dr=0.5, rdr=0.5):
+        input_lens = self._encoder.vector_length
+        min_units = 32
+        # max_units = 128
+        max_units = 9999
+
+        inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
+        # Add embedding if the input length is too large
+        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
+                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
+        # Make more units for smaller channels and cut too large channels
+        xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
+        total_units = sum(xlens)
+
+        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
+        # lstms1 = [Bidirectional(LSTM(xlen, return_sequences=True))(input) for input, xlen in zip(embedded, xlens)]
+        mlstm1 = Concatenate()(lstms1)
+        mlstm1 = MaxPooling1D(pool_size=2)(mlstm1)
+        mlstm2 = LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(mlstm1)
+        # mlstm2 = Bidirectional(LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr))(mlstm1)
+        mlstm2 = MaxPooling1D(pool_size=2)(mlstm2)
+        mlstm3 = LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(mlstm2)
+        # mlstm3 = Bidirectional(LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr))(mlstm2)
+
+        last = mlstm3
+        last = Dropout(rate=dr)(last)
+        output = Dense(self.nbclasses, activation='softmax', name='output')(last)
+
+        self._model = Model(inputs=inputs, outputs=[output])
+        self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
+
+    def compile4(self, aux_dense_units=256, dr=0.5, rdr=0.5):
         """Compile 2 subnetworks (for two branches of shprtest dependency path)"""
-        inputs1, left_auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
-        inputs2, right_auxs = self.get_model2(min_units, aux_dense_units, dr, rdr)
+        inputs1, left_auxs = self.get_model2(dr, rdr)
+        inputs2, right_auxs = self.get_model2(dr, rdr)
         inputs = inputs1 + inputs2
 
         assert(len(left_auxs) == len(right_auxs))
@@ -78,15 +114,8 @@ class DBPediaNet(SequenceNet):
         last = Concatenate()(denses)
         output = Dense(self.nbclasses, activation='softmax', name='output')(last)
 
-        # Multiple outputs
-        direction_output = Dense(1, activation='sigmoid', name='direction_output')(last)
-        self._model = Model(inputs=inputs, outputs=[output, direction_output])
-        self._model.compile(optimizer='adam',
-                            loss={'output': 'categorical_crossentropy', 'direction_output': 'binary_crossentropy'},
-                            loss_weights={'output': 1, 'direction_output': 1})
-
-    def compile3(self):
-        xlens = self._encoder.nbclasses
+    def compile5(self):
+        xlens = self._encoder.vector_length
 
         last_units = 256
 
@@ -97,11 +126,11 @@ class DBPediaNet(SequenceNet):
         last = Concatenate()(lstms3)  # todo: what axis, really? there're two axes for each layer: length and xlen.
 
         # todo: adjust pool size to be a divisor of lstms' output lengths
-        maxpools1 = [TimeDistributed(MaxPool1D(pool_size=2))(lstm1) for lstm1 in lstms1]
+        maxpools1 = [TimeDistributed(MaxPooling1D(pool_size=2))(lstm1) for lstm1 in lstms1]
         maxpool1 = Concatenate()(maxpools1)
 
         all_lstms = [lstms1, lstms2, lstms3]
-        all_maxpools = [[TimeDistributed(MaxPool1D(pool_size=2))(lstm) for lstm in lstms] for lstms in all_lstms]
+        all_maxpools = [[TimeDistributed(MaxPooling1D(pool_size=2))(lstm) for lstm in lstms] for lstms in all_lstms]
         cmaxpools = [Concatenate()(maxpools) for maxpools in all_maxpools]
 
 
@@ -117,7 +146,7 @@ class DBPediaNet(SequenceNet):
         data_gen = self._encoder(data_gen)
         c = self._encoder.channels  # so, arr[:c] is the inputs and the arr[c:] is the output(s)
         res = ((arr[:c], arr[c:]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and outputs (classes)
-        return res
+        return cycle(res)
 
     def predict(self, subject_object_spans_pairs, topn=1):
         encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
