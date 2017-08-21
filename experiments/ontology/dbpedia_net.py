@@ -52,11 +52,10 @@ class DBPediaNet(SequenceNet):
         lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
         lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
 
-        aux_lstms = [Concatenate()(lstm) for lstm in [lstms1, lstms2, lstms3]]
-        # aux_lstms = [GlobalMaxPooling1D()(mlstm) for mlstm in aux_lstms]
-        aux_lstms = [MaxPooling1D(pool_size=2)(mlstm) for mlstm in aux_lstms]
-        aux_lstms = [LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm in aux_lstms]
-        aux_lstms = [MaxPooling1D(pool_size=2)(lstm) for lstm in aux_lstms]
+        aux_lstms = [Concatenate()(lstms) for lstms in [lstms1, lstms2, lstms3]]
+        # aux_lstms = [MaxPooling1D(pool_size=2)(mlstm) for mlstm in aux_lstms]
+        aux_lstms = [LSTM(total_units, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm in aux_lstms]
+        # aux_lstms = [MaxPooling1D(pool_size=2)(lstm) for lstm in aux_lstms]
 
         return inputs, aux_lstms
 
@@ -65,6 +64,7 @@ class DBPediaNet(SequenceNet):
 
         lasts = [Dense(aux_dense_units, activation='sigmoid')(l) for l in lasts]
         last = Concatenate()(lasts)
+        last = Dropout(rate=dr)(last)
         output = Dense(self.nbclasses, activation='softmax', name='output')(last)
 
         self._model = Model(inputs=inputs, outputs=[output])
@@ -87,12 +87,12 @@ class DBPediaNet(SequenceNet):
         lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
         # lstms1 = [Bidirectional(LSTM(xlen, return_sequences=True))(input) for input, xlen in zip(embedded, xlens)]
         mlstm1 = Concatenate()(lstms1)
-        mlstm1 = MaxPooling1D(pool_size=2)(mlstm1)
+        # mlstm1 = MaxPooling1D(pool_size=2)(mlstm1)
         mlstm2 = LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(mlstm1)
         # mlstm2 = Bidirectional(LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr))(mlstm1)
-        mlstm2 = MaxPooling1D(pool_size=2)(mlstm2)
-        mlstm3 = LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(mlstm2)
-        # mlstm3 = Bidirectional(LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr))(mlstm2)
+        # mlstm2 = MaxPooling1D(pool_size=2)(mlstm2)
+        # mlstm3 = LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(mlstm2)
+        mlstm3 = Bidirectional(LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr))(mlstm2)
 
         last = mlstm3
         last = Dropout(rate=dr)(last)

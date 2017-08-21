@@ -74,6 +74,7 @@ def get_dbp_data(sclasses, batch_size):
     dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True, exclude_records=exclude)
     # train_data, val_data = dataset, golden  # using golden set as testing set
     train, val = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
+
     return train, val
 
 
@@ -82,15 +83,6 @@ def load_benchmark_data(sclasses, data_dir, filenames=('train.pck', 'test.pck'))
     _classes.update({'no_relation', 'Other', None})  # possible negative classes
     for filename in filenames:
         input_path = os.path.join(data_dir, filename)
-
-        # all_data = list(unpickle(input_path))
-        # data = [r for r in all_data if r.relation in sclasses]
-        # print(len(all_data), len(data), 'diff:', len(all_data) - len(data))
-        # from cytoolz import groupby
-        # grouped = groupby(lambda r: r.relation, all_data)
-        # for rel_type in grouped:
-        #     print(rel_type in sclasses, rel_type)
-
         data = [record for record in unpickle(input_path) if record.relation in _classes]
         random.shuffle(data)
         yield data
@@ -112,21 +104,20 @@ def main():
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
     from experiments.ontology.symbols import KBP37_CLASSES_MAP, SEMEVAL_CLASSES_MAP
 
-    # import spacy
-    # nlp = spacy.load('en')  # it is imported from other files for now
-    # todo: load trained NER
-    from experiments.ontology.data import nlp
+    import spacy
+    from experiments.ontology.config import config
+    nlp = spacy.load(**config['models']['nlp'])
 
     random.seed(2)
     batch_size = 1
-    epochs = 4
+    epochs = 5
 
     # Load our data
-    # model_name = 'noner.dr.noaug.v4.4.all.inv'
-    # sclasses = RC_CLASSES_MAP_ALL
-    # inverse = RC_INVERSE_MAP
-    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-    # train_data, val_data = get_dbp_data(sclasses, batch_size)
+    model_name = 'noner.dr.noaug.v5.1.c3.all.inv'
+    sclasses = RC_CLASSES_MAP_ALL
+    inverse = RC_INVERSE_MAP
+    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
+    train_data, val_data = get_dbp_data(sclasses, batch_size)
 
     # Load benchmark data (kbp37)
     # model_name = 'noner.dr.noaug.kbp.v5.2'
@@ -135,10 +126,10 @@ def main():
     # train_data, val_data = get_kbp37_data(sclasses)
 
     # Load benchmark data (semeval)
-    model_name = 'noner.dr.noaug.semeval.v7.c3'
-    sclasses = SEMEVAL_CLASSES_MAP
-    encoder = DBPediaEncoder(nlp, sclasses)
-    train_data, val_data = get_semeval_data(sclasses)
+    # model_name = 'noner.dr.noaug.semeval.v7.c3'
+    # sclasses = SEMEVAL_CLASSES_MAP
+    # encoder = DBPediaEncoder(nlp, sclasses)
+    # train_data, val_data = get_semeval_data(sclasses)
 
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
@@ -158,10 +149,10 @@ def main():
     net._model.summary(line_length=80)
 
     # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-    net.train(train_data, epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
+    net.train(train_data[14:], epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
 
     test_data = val_data
-    prob_threshold = 0.0
+    prob_threshold = 0.5
     hits, misses = eye_test(net, test_data, prob_threshold=prob_threshold)
     print('rights: {}/{} with prob_threshold={}'.format(len(hits), len(test_data), prob_threshold))
     # evals = net.evaluate(cycle(val_data), val_steps)  # NB: remember about cycle()
