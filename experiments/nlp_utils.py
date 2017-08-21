@@ -38,7 +38,7 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     :param span2: one of the spans
     :param include_spans: whether include source spans in the SDP or not
     :param nb_context_tokens: number of tokens for expanding SDP to the right and to the left (default 0, i.e. plain SDP)
-    :return: (list of tokens, index of common ancestor in that list OR -1 if it wasn't found)
+    :return: (list of tokens, index of common ancestor in that list OR -1 if it wasn't found, ispan1, ispan2)
     """
     path = []
     ancestors1 = list(span1.root.ancestors)
@@ -69,8 +69,11 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     lr = len(rights)
     rights = rights[:min(lr, nb_context_tokens)]
     path = list(lefts) + path + list(rights)
+
     iroot = path.index(common_anc) if common_anc in path else -1
-    return path, iroot
+    ispan1_start = path.index(span1[0]); ispan1 = (ispan1_start, ispan1_start + len(span1))
+    ispan2_start = path.index(span2[0]); ispan2 = (ispan2_start, ispan2_start + len(span2))
+    return path, iroot, ispan1, ispan2
 
 
 def chars2spans(doc, *char_offsets_pairs):

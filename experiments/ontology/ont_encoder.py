@@ -29,6 +29,7 @@ class DBPediaEncoder:
         self.nlp = nlp
         self.classes = superclass_map
         self._inverse_map = dict()
+        assert isinstance(superclass_map, dict)
 
         # All relations not in classes.values() (that is, unknown relations) will be tagged with the default_tag (i.e. examples of no-relations)
         raw_classes = list(product(sorted(set(self.classes.values())), [True, False]))
@@ -81,10 +82,10 @@ class DBPediaEncoder:
         :param o_span: object span
         :return: encoded data (tuple of arrays)
         """
-        sdp, iroot = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
+        sdp, iroot, ispan1, ispan2 = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         sdp = expand_ents(sdp, self.expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
-        self.last_sdp_root = iroot
+        self.last_sdp_meta = iroot, ispan1, ispan2
         _iob_tags = []
         _ner_tags = []
         _pos_tags = []
@@ -172,10 +173,21 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
 
+        len_output = len(self.last_sdp)
         # todo: think about feeding on each timestep
-        s_type = [s_type] * len(self.last_sdp)  # feeding type on each timestep
-        o_type = [o_type] * len(self.last_sdp)  # feeding type on each timestep
-        yield (*data, np.array(s_type), np.array(o_type), *cls)
+        # s_type_out = [s_type] * len_output  # feeding type on each timestep
+        # o_type_out = [o_type] * len_output  # feeding type on each timestep
+
+        # Feed entity types only on the corresponding to entity spans time steps
+        iroot, ispan1, ispan2 = self.last_sdp_meta
+        s_type_out = [np.zeros_like(s_type)] * len_output
+        for s_pos in range(*ispan1):
+            s_type_out[s_pos] = s_type
+        o_type_out = [np.zeros_like(o_type)] * len_output
+        for o_pos in range(*ispan2):
+            o_type_out[o_pos] = o_type
+
+        yield (*data, np.array(s_type_out), np.array(o_type_out), *cls)
 
 
 class DBPediaEncoderBranched(DBPediaEncoder):
@@ -190,7 +202,7 @@ class DBPediaEncoderBranched(DBPediaEncoder):
 
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
-        i = self.last_sdp_root
+        i, _, _ = self.last_sdp_meta
         left_part = [d[:i+1] for d in data]
         right_part = [d[i:] for d in data]
         return left_part + right_part
