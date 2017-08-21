@@ -1,19 +1,17 @@
-import logging as log
 import json
+import logging as log
 import os
-
-from rdflib.graph import Dataset, Graph, ReadOnlyGraphAggregate
-from rdflib.namespace import RDF, RDFS, OWL, FOAF, Namespace, URIRef
-from rdflib.store import Store
-from rdflib.plugins.stores.sparqlstore import SPARQLStore, SPARQLUpdateStore
-from rdflib.plugins.stores.sparqlstore import SPARQLWrapper
-from SPARQLWrapper import DIGEST, POST
-from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
 from urllib.error import HTTPError
 
-from experiments.utils import except_safe
-from experiments.ontology.config import config
+from SPARQLWrapper import DIGEST, POST
+from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
+from rdflib.graph import Dataset, ReadOnlyGraphAggregate
+from rdflib.namespace import RDF, RDFS, OWL, Namespace, URIRef
+from rdflib.plugins.stores.sparqlstore import SPARQLUpdateStore
+from rdflib.plugins.stores.sparqlstore import SPARQLWrapper
 
+from experiments.ontology.config import config
+from experiments.utils import except_safe
 
 ont_config = config['ontology']
 endpoint = update_endpoint = ont_config['endpoint']
@@ -114,43 +112,6 @@ def get_superclass(uri):
         c = direct_scls[0]
         return uri if c == OWL.Thing else c
     return None
-
-
-class NERTypeResolver:
-    from experiments.ontology.symbols import ENT_MAPPING
-    # Map uris of final classes to its' names
-    final_classes_names = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
-
-    def __init__(self, raw_classes=tuple()):
-        assert(all(isinstance(x, URIRef) for x in raw_classes))
-        self.superclasses_map = self.get_superclasses_map(raw_classes)
-
-    def get_by_uri(self, uri, default_type=None):
-        return self.get_by_type_uri(get_type(uri), default_type)
-
-    def get_by_type_uri(self, type_uri, default_type=None):
-        final_type_uri = self.superclasses_map.get(type_uri, self.get_final_class(type_uri))  # try to get the type from buffer
-        if final_type_uri is not None:
-            self.superclasses_map[type_uri] = final_type_uri  # add type to buffer (or do nothing useful if it is already there)
-            return self.final_classes_names[final_type_uri]
-        return default_type
-
-    def get_final_class(self, cls):
-        c = cls
-        while not(c in self.final_classes_names or c is None):
-            c = get_superclass(c)
-            if c == cls:
-                return None
-            cls = c
-        return c
-
-    def get_superclasses_map(self, classes):
-        superclasses = dict()
-        for cls in classes:
-            fc = self.get_final_class(cls)
-            if fc is not None:
-                superclasses[cls] = fc
-        return superclasses
 
 
 def query_raw(q):

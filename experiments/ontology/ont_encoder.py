@@ -131,7 +131,7 @@ class DBPediaEncoder:
 
 
 class DBPediaEncoderWithEntTypes(DBPediaEncoder):
-    from experiments.ontology.sub_ont import NERTypeResolver
+    from experiments.ontology.linker import NERTypeResolver
     from experiments.ontology.symbols import ENT_CLASSES
     _ner_type_resolver = NERTypeResolver()
     _ent_tags = CategoricalTags(sorted(ENT_CLASSES), default_tag='')

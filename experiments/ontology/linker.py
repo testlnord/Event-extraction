@@ -1,6 +1,5 @@
 import logging as log
 import os
-import random
 from math import floor
 import pickle
 from collections import defaultdict, namedtuple
@@ -10,13 +9,51 @@ from multiprocessing import Pool
 from concurrent.futures import ProcessPoolExecutor
 
 import spacy
+from rdflib import URIRef
 from rdflib.namespace import RDF, RDFS
-from pygtrie import StringTrie, CharTrie
+from pygtrie import CharTrie
 from cytoolz import groupby, first, second
 from fuzzywuzzy import fuzz
 
-from experiments.ontology.sub_ont import NERTypeResolver
-from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo
+from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
+    get_type, get_superclass
+
+
+class NERTypeResolver:
+    from experiments.ontology.symbols import ENT_MAPPING
+    # Map uris of final classes to its' names
+    final_classes_names = {URIRef(dbo[s]): (ent_type if ent_type is not None else s) for s, ent_type in ENT_MAPPING.items()}
+
+    def __init__(self, raw_classes=tuple()):
+        assert(all(isinstance(x, URIRef) for x in raw_classes))
+        self.superclasses_map = self.get_superclasses_map(raw_classes)
+
+    def get_by_uri(self, uri, default_type=None):
+        return self.get_by_type_uri(get_type(uri), default_type)
+
+    def get_by_type_uri(self, type_uri, default_type=None):
+        final_type_uri = self.superclasses_map.get(type_uri, self.get_final_class(type_uri))  # try to get the type from buffer
+        if final_type_uri is not None:
+            self.superclasses_map[type_uri] = final_type_uri  # add type to buffer (or do nothing useful if it is already there)
+            return self.final_classes_names[final_type_uri]
+        return default_type
+
+    def get_final_class(self, cls):
+        c = cls
+        while not(c in self.final_classes_names or c is None):
+            c = get_superclass(c)
+            if c == cls:
+                return None
+            cls = c
+        return c
+
+    def get_superclasses_map(self, classes):
+        superclasses = dict()
+        for cls in classes:
+            fc = self.get_final_class(cls)
+            if fc is not None:
+                superclasses[cls] = fc
+        return superclasses
 
 
 TrieEntry = namedtuple('TrieEntry', ['uri', 'sf', 'ent_type'])

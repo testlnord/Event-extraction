@@ -17,7 +17,7 @@ from intervaltree import IntervalTree
 
 from experiments.data_utils import unpickle
 from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord
-from experiments.ontology.sub_ont import NERTypeResolver
+from experiments.ontology.linker import NERTypeResolver
 from experiments.ontology.sub_ont import dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
 from experiments.ontology.sub_ont import gf, gdb
