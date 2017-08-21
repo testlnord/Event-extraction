@@ -70,7 +70,13 @@ class RelRecord:
     def object_text(self): return self.context[self.o_startr: self.o_endr]
 
     @property
-    def triple(self): return (self.subject_text, self.relation, self.object_text)
+    def subject(self): return self.subject_text
+
+    @property
+    def object(self): return self.object_text
+
+    @property
+    def triple(self): return (self.subject, self.relation, self.object)
 
     def __hash__(self): return hash(self.id)
 
@@ -89,13 +95,16 @@ class RelationRecord(RelRecord):
     def __init__(self, s: URIRef, r: URIRef, o: URIRef,
                  s0: int, s1: int, o0: int, o1: int,
                  ctext, cstart=0, cend=None, source_id=None):
-        self.subject = s
+        self.subject_uri = s
         self.relation = r
-        self.object = o
+        self.object_uri = o
         super().__init__(r, s0, s1, o0, o1, ctext, cstart, cend, source_id)
 
     @property
-    def triple(self): return (self.subject, self.relation, self.object)
+    def subject(self): return self.subject_uri
+
+    @property
+    def object(self): return self.object_uri
 
 
 class EntityRecord:

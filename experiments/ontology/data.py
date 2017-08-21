@@ -401,7 +401,7 @@ def repickle_rrecords(path):
     records = list(unpickle(path))
     with open(path, 'wb') as f:
         for rr in records:
-            new_record = RelationRecord(rr.subject, rr.relation, rr.object, rr.s0, rr.s1, rr.o0, rr.o1, rr.context, rr.cstart, rr.cend, rr.article_id)
+            new_record = RelationRecord(rr.subject, rr.relation, rr.object, rr.s0, rr.s1, rr.o0, rr.o1, rr.context, rr.cstart, rr.cend, rr.source_id)
             pickle.dump(new_record, f)
 
 
