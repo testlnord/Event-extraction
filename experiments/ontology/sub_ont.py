@@ -1,4 +1,7 @@
 import logging as log
+import json
+import os
+
 from rdflib.graph import Dataset, Graph, ReadOnlyGraphAggregate
 from rdflib.namespace import RDF, RDFS, OWL, FOAF, Namespace, URIRef
 from rdflib.store import Store
@@ -8,22 +11,15 @@ from SPARQLWrapper import DIGEST, POST
 from SPARQLWrapper.SPARQLExceptions import EndPointNotFound
 from urllib.error import HTTPError
 
-import json
-
 from experiments.utils import except_safe
+from experiments.ontology.config import config
 
 
-dbp_dir = '/home/user/datasets/dbpedia/'
-basedir = '/home/user/datasets/dbpedia/z2016_10/'
-# dir_articles = '/home/user/datasets/dbpedia/articles/'
-dir_articles = '/home/user/datasets/dbpedia/articles3/'
-
-update_endpoint = 'http://localhost:8890/sparql-auth'
-# endpoint = 'http://localhost:8890/sparql'  # no update (insert, create graph, whatever...) access
-endpoint = update_endpoint
+ont_config = config['ontology']
+endpoint = update_endpoint = ont_config['endpoint']
 store = SPARQLUpdateStore(endpoint, update_endpoint, autocommit=True)  # need to call store.commit explicitly todo: there's some trouble in sparqlstore's source with that autocommit logic
 store.setHTTPAuth(DIGEST)
-store.setCredentials(user='dba', passwd='admin')
+store.setCredentials(user=ont_config['endpoint_user'], passwd=ont_config['endpoint_passwd'])
 ds = Dataset(store, default_union=False)
 
 iri_dbo = 'http://dbpedia.org/ontology'
@@ -51,6 +47,9 @@ gmore = ds.get_context(iri_more)
 gfall = ReadOnlyGraphAggregate([gf, gmore])
 
 
+dir_articles = config['data']['articles_dir']
+
+
 # It can happen that Virtuoso server is at the process of making a checkpoint, which will result in the following exceptions.
 # Checkpoint takes few seconds, so, the easy way is just to wait few seconds and try again. Decorator does exactly that.
 @except_safe(EndPointNotFound, HTTPError)
@@ -61,7 +60,7 @@ def get_article(subject):
     except StopIteration:
         return None
     try:
-        with open(dir_articles + id_uri) as f:
+        with open(os.path.join(dir_articles, id_uri)) as f:
             return json.load(f)
     except FileNotFoundError:
         return None
@@ -179,13 +178,7 @@ def test_redirects_disambigs():
         print(str(uri))
 
 
-if __name__ == "__main__":
-    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-
-    test_redirects_disambigs()
-    exit()
-
-    # Some simple tests
+def test_store_access():
     gtest = ds.get_context('gtest')
     gtest.update('INSERT DATA {<s1> <r1> <o1> }')
     # gtest.add((URIRef('s1'), URIRef('r1'), URIRef('o1')))  # analogous
@@ -194,4 +187,8 @@ if __name__ == "__main__":
     print(len(gtest.query('SELECT * WHERE {?s ?r ?o}')))
 
 
+if __name__ == "__main__":
+    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    test_redirects_disambigs()
+    assert get_article(dbr.Microsoft) is not None

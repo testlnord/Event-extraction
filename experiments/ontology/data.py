@@ -22,17 +22,11 @@ from experiments.ontology.sub_ont import dbo, dbr
 from experiments.ontology.sub_ont import get_article, get_label
 from experiments.ontology.sub_ont import gf, gdb
 
+
 nlp = spacy.load('en_core_web_sm')  # 'sm' for small
 # from experiments.utils import load_nlp
 # nlp = load_nlp()
 # nlp = load_nlp(batch_size=32)
-
-
-data_dir = '/home/user/datasets/dbpedia/'
-props_dir = '/home/user/datasets/dbpedia/qs/props/'
-contexts_dir = '/home/user/datasets/dbpedia/contexts/'
-classes_dir= '/home/user/datasets/dbpedia/qs/classes/'
-superclasses_file = classes_dir + 'classes.map.json'
 
 
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
@@ -61,56 +55,6 @@ def filter_context(crecord):
 
 def filter_contexts(crecords):
     return list(filter(None, map(filter_context, crecords)))
-
-
-# for old data
-def read_dataset(path):
-    with open(path, 'r', newline='') as f:
-        reader = csv.reader(f, delimiter=' ', quotechar='|', quoting=csv.QUOTE_NONNUMERIC)
-        header = next(reader)
-        log.info('read_dataset: header: {}'.format(header))
-        # for s, r, o, s0, s1, o0, o1, ctext, cstart, cend, artid in reader:
-        for data in reader:
-            yield RelationRecord(*data)
-
-
-# for old (.csv) format of relation records
-def load_rc_data_old(classes, data_dir=contexts_dir, shuffle=True):
-    """Load ContextRecords with classes from @classes from all files in the directory @data_dir and shuffle it."""
-    dataset = []
-    for filename in os.listdir(data_dir):
-        filepath = os.path.join(data_dir, filename)
-        if os.path.isfile(filepath):
-            for crecord in read_dataset(filepath):
-                if crecord.relation in classes:
-                    filtered = filter_context(crecord)
-                    if filtered is not None:
-                        dataset.append(filtered)
-    if shuffle: random.shuffle(dataset)
-    return dataset
-
-
-def load_prop_superclass_mapping(filename=classes_dir + 'prop_classes.csv'):
-    """Mapping between relations and superclasses"""
-    classes = {}
-    with open(filename, 'r', newline='') as f:
-        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC, delimiter=' ')
-        for row in reader:
-            icls, cls, rel = row[:3]
-            if int(icls) >= 0:
-                classes[rel] = cls
-    return classes
-
-
-def load_inverse_mapping(filename=classes_dir + 'prop_inverse.csv'):
-    """Mapping between superclasses and their inverse superclasses"""
-    inverse = {}
-    with open(filename, 'r', newline='') as f:
-        reader = csv.reader(f, quoting=csv.QUOTE_NONNUMERIC, delimiter=' ')
-        for icls, cls, iinv, inv in reader:
-            inverse[cls] = inv
-            inverse[inv] = cls
-    return inverse
 
 
 def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=True, exclude_records=frozenset()):
@@ -240,7 +184,7 @@ def get_contexts(docs, *ents_uris):
         yield ents_found
 
 
-def run_extraction(inner_graph, outer_graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
+def run_extraction(nlp, inner_graph, outer_graph, subject_uris, use_all_articles=False, n_threads=7, batch_size=1000):
     """
     Implements specific policy of extraction (i.e. choice of candidate entities and articles)
     :param inner_graph: for example -- domain-specific graph
@@ -279,7 +223,7 @@ def run_extraction(inner_graph, outer_graph, subject_uris, use_all_articles=Fals
 
 
 # Writes all found relations. Filtering of only needed classes should be done later, in encoder, for example.
-def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner_graph=gf, outer_graph=gdb):
+def make_dataset(nlp, ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner_graph=gf, outer_graph=gdb):
     fner = open(ner_outfile, 'wb')
     frc = open(rc_outfile, 'wb')
     frc2 = open(rc_other_outfile, 'wb')
@@ -294,7 +238,7 @@ def make_dataset(ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, inner
         # NB: using outer_graph for the search of objects for subject_uris!
         # graph = outer_graph
         graph = inner_graph
-        for art_id, doc, ents in run_extraction(graph, outer_graph, subject_uris, use_all_articles=False):
+        for art_id, doc, ents in run_extraction(nlp, graph, outer_graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
             ers = [EntityRecord(cr, *ent) for ent in ents]
             cr.ents = ers
@@ -407,16 +351,18 @@ def repickle_rrecords(path):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+    from experiments.ontology.config import config
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
 
+    data_dir = config['data']['dir']
     ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
-    # make_dataset(ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+    # make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
 
     # rc_paths = [rc_out, rc0_out, rc2_out]
     # for rc_path in rc_paths:
