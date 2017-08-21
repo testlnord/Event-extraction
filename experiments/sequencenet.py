@@ -60,7 +60,7 @@ class SequenceNet:
         if save_epoch_models:
             filepath = self.relpath(
                 dir_for_models,
-                '{}_model_{}_full_epochsize{}'.format(type(self).__name__.lower(), model_prefix, epochsize)
+                '{}_model_{}_full'.format(type(self).__name__.lower(), model_prefix)
                 + '_epoch{epoch:02d}.h5'
                 # + '_epoch{epoch:02d}_valloss{val_loss:.2f}.h5'
             )
