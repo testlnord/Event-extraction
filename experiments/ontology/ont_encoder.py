@@ -1,6 +1,5 @@
 import logging as log
 from itertools import product
-from collections import defaultdict
 
 import numpy as np
 
@@ -11,9 +10,6 @@ from experiments.nlp_utils import *
 
 def crecord2spans(crecord, nlp):
     return chars2spans(nlp(crecord.context), crecord.s_spanr, crecord.o_spanr)
-
-
-# Reminder: to change the number of channels, change: self.channels, self.vector_length, self.encode_data
 
 
 class DBPediaEncoder:
@@ -52,11 +48,10 @@ class DBPediaEncoder:
         self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self._expand_context = expand_context
         self.expand_noun_chunks = expand_noun_chunks
-        assert len(self.vector_length) == self.channels
 
     @property
     def channels(self):
-        return 5  # iob_tags, ner_tags, pos_tags, dep_tags, word_vectors
+        return len(self.vector_length)
 
     @property
     def vector_length(self):
@@ -82,10 +77,9 @@ class DBPediaEncoder:
         :param o_span: object span
         :return: encoded data (tuple of arrays)
         """
-        sdp, iroot, ispan1, ispan2 = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
+        sdp, self.last_sdp_root = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
         sdp = expand_ents(sdp, self.expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
-        self.last_sdp_meta = iroot, ispan1, ispan2
         _iob_tags = []
         _ner_tags = []
         _pos_tags = []
@@ -151,10 +145,6 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
         _l = len(self._ent_tags)
         return (*_vl, _l, _l)
 
-    @property
-    def channels(self):
-        return super().channels + 2
-
     # todo: linking with existing uri should happen here
     # def encode_data(self, s_span, o_span):
     #     data = super().encode_data(s_span, o_span)
@@ -164,29 +154,26 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
-        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
-        s_type = self._encode_type(crecord.subject)
-        o_type = self._encode_type(crecord.object)
 
         # Set the entities types on crecord's doc here as ground truth
         #   and call data.encode_data() which will use these anno
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
 
+        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
+        s_type = self._encode_type(crecord.subject)
+        o_type = self._encode_type(crecord.object)
         len_output = len(self.last_sdp)
-        # todo: think about feeding on each timestep
-        # s_type_out = [s_type] * len_output  # feeding type on each timestep
-        # o_type_out = [o_type] * len_output  # feeding type on each timestep
 
         # Feed entity types only on the corresponding to entity spans time steps
-        iroot, ispan1, ispan2 = self.last_sdp_meta
-        s_type_out = [np.zeros_like(s_type)] * len_output
-        for s_pos in range(*ispan1):
-            s_type_out[s_pos] = s_type
-        o_type_out = [np.zeros_like(o_type)] * len_output
-        for o_pos in range(*ispan2):
-            o_type_out[o_pos] = o_type
+        s_type_out = [np.zeros_like(s_type)] * len_output; s_indices = {token.i for token in s_span}
+        o_type_out = [np.zeros_like(o_type)] * len_output; o_indices = {token.i for token in o_span}
+        for i, token in enumerate(self.last_sdp):
+            if token.i in s_indices: s_type_out[i] = s_type
+            if token.i in o_indices: o_type_out[i] = o_type
 
+        # s_type_out = [s_type] * len_output  # feeding type on each timestep
+        # o_type_out = [o_type] * len_output  # feeding type on each timestep
         yield (*data, np.array(s_type_out), np.array(o_type_out), *cls)
 
 
@@ -196,13 +183,9 @@ class DBPediaEncoderBranched(DBPediaEncoder):
         _vl = super().vector_length
         return (*_vl, *_vl)
 
-    @property
-    def channels(self):
-        return super().channels * 2
-
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
-        i, _, _ = self.last_sdp_meta
+        i = self.last_sdp_root
         left_part = [d[:i+1] for d in data]
         right_part = [d[i:] for d in data]
         return left_part + right_part
@@ -235,43 +218,47 @@ class EncoderDataAugmenter:
             yield (*rdata, *rcls)
 
 
-def sort_simmetric(dataset):
-    """Sort dataset by relation and the directionality of it."""
-    direction_sorted = defaultdict(lambda : defaultdict(list))
-    for cr in dataset:
-        direction = (cr.s_end <= cr.o_start)
-        direction_sorted[cr.relation][direction].append(cr)
-    return direction_sorted
-
-
-def find_simmetric(dataset):
-    for rel, d in sort_simmetric(dataset).items():
-        print()
-        lt = len(d[True])
-        lf = len(d[False])
-        print('rev: {}; norm: {};'.format(lf, lt), rel)
-        if lt != 0 and lf != 0:
-            for direction_same in d.keys():
-                for cr in d[direction_same]:
-                    print(int(direction_same), cr.triple)
-                    print(' ', cr.context)
-
-
 if __name__ == "__main__":
     import os
+    import spacy
     from experiments.ontology.tagger import load_golden_data
-    from experiments.ontology.data import nlp, load_rc_data, filter_context
+    from experiments.ontology.data import load_rc_data, filter_context
     from experiments.ontology.data_structs import RelationRecord, RelRecord
     from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
+    from experiments.ontology.config import config
+
+    # Pipeline:
+    # doc = nlp(text)
+    # linked_doc = link_ents(doc)
+    # rel_candidates = generate_candidates(linked_doc)
+    #   there could be some already present in the ontology candidates...
+    # rel_preds = model.predict(rel_candidates)
+    #   filter unsure ones
+
+    # load nlp model (our?)
+    #   ! align with symbols classes
+    #       ? some test of nlp classes? or somehow get them...
+    # inst encoder
+    #   load classes from symbols
+    #   ! link linker to encoder
+    #       load linker model
+    #   ner type resolver
+    # inst net, load it's model
+
+    # global things:
+    #   graphs & namespaces
+    #   nlp
+    #   linker, type resolver
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
+    nlp = spacy.load(**config['models']['nlp'])
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
 
-    data_dir = '/home/user/datasets/dbpedia/'
+    data_dir = config['data']['dir']
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
     dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
@@ -288,10 +275,6 @@ if __name__ == "__main__":
 
     bad = 0
     for i, record in enumerate(_fc):
-        print()
-        # final_rel = sclasses.get(str(record.relation))
-        # true_tag = (final_rel, record.direction)
-
         text = record.context.strip()
         xs = record.s_startr
         s = text[xs:record.s_endr]
@@ -300,18 +283,3 @@ if __name__ == "__main__":
         print('t:', text)
         print('s:', s, 'true:', str(record.subject))
         print('o:', o, 'true:', str(record.object))
-
-        # for data in encoder.encode(cr):
-        #     data, clss = data[:c], data[c:]
-        #     print()
-        #     print(i, cr.triple)
-        #
-        #     sdp = encoder.last_sdp
-        #     s2 = expand_ents(sdp)
-        #     s3 = expand_ents(sdp, True)
-        #     print(sdp)
-        #     if len(sdp) != len(s2):
-        #         print(s2)
-        #         print(s3)
-        #     for tok, iob, pos, dep, vec in zip(sdp, *data):
-        #         print(tok.text.ljust(20), tok.pos_.ljust(10), tok.dep_.ljust(10))

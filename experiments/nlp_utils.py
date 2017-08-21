@@ -56,13 +56,13 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     if include_spans:
         path = list(span1) + path + list(span2)
 
-    # Sort to match the sentence order
-    path = list(sorted(path, key=lambda token: token.i))
+    # Remove possible duplicates and sort to match the sentence order
+    uniques = {token.i: token for token in path}
+    path = [uniques[i] for i in sorted(uniques)]
 
     # Extract context in the dep tree for border tokens in path
     left = path[0]
     lefts = list(left.lefts)
-    # todo: duplicates on the left sometimes appear
     lefts = lefts[max(0, len(lefts) - nb_context_tokens):]
     right = path[-1]
     rights = list(right.rights)
@@ -71,9 +71,7 @@ def shortest_dep_path(span1, span2, include_spans=True, nb_context_tokens=0):
     path = list(lefts) + path + list(rights)
 
     iroot = path.index(common_anc) if common_anc in path else -1
-    ispan1_start = path.index(span1[0]); ispan1 = (ispan1_start, ispan1_start + len(span1))
-    ispan2_start = path.index(span2[0]); ispan2 = (ispan2_start, ispan2_start + len(span2))
-    return path, iroot, ispan1, ispan2
+    return path, iroot
 
 
 def chars2spans(doc, *char_offsets_pairs):
