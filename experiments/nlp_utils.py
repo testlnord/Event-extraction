@@ -12,7 +12,8 @@ def merge_ents_offsets(primal_ents, other_ents):
     :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
     :return: merged list of ents
     """
-    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e.start_char < e.end_char)
+    offsets = [(e.start_char, e.end_char) for e in primal_ents if e.start_char < e.end_char]
+    ents_tree = IntervalTree.from_tuples(offsets)
     ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent.start_char, ent.end_char)]
     ents_filtered.extend(primal_ents)
     return ents_filtered
