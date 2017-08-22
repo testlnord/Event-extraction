@@ -1,4 +1,3 @@
-import csv
 import logging as log
 import os
 import pickle
@@ -15,15 +14,16 @@ from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 
 from experiments.data_utils import unpickle
+from experiments.nlp_utils import merge_ents_offsets
 from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord
 from experiments.ontology.linker import NERTypeResolver
 from experiments.ontology.sub_ont import dbo, dbr, gf, gdb
 from experiments.ontology.sub_ont import get_article, get_label
 
+# todo: test rename of fields
+# EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
 
-# todo: change to 'start_char', 'end_char' and refactor resolve_relations
-EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
-
+EntityMention = namedtuple('EntityMention', ['start_char', 'end_char', 'uri'])
 
 
 def filter_context(crecord):
@@ -65,8 +65,8 @@ def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=Tr
     records = []
     for rr in unpickle(rc_file):
         # Same subject and object sometimes happen
-        if str(rr.relation) in _classes and rr not in exclude_records \
-            and rr.valid_offsets and rr.subject != rr.object:
+        if (str(rr.relation) in _classes and rr not in exclude_records
+            and rr.valid_offsets and rr.subject != rr.object):
             _fc = filter_context(rr)
             if _fc is not None:
                 records.append(_fc)
@@ -91,23 +91,11 @@ def resolve_entities(article_links, graph=gdb):
             except Exception as e:  # sparqlstore cat throw excetion of generic type
                 log.warning('resolve_entities: ignoring exception: {}'.format(e))
                 continue
-            for start, end, surface_form in offsets_list:
-                yield EntityMention(start, end, uri)
+            for start_char, end_char, surface_form in offsets_list:
+                yield EntityMention(start_char, end_char, uri)
 
 
-def merge_ents_offsets(primal_ents, other_ents):
-    """
-    Merge ent lists with non-overlapping entries, giving precedence to primal_ents.
-    :param primal_ents: iterable of tuples of form (begin_offset, end_offset, data)
-    :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
-    :return: merged list of ents
-    """
-    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e[0] < e[1])
-    ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent[0], ent[1])]
-    ents_filtered.extend(primal_ents)
-    return ents_filtered
-
-
+# todo:
 def resolve_relations(art_id, doc, ents_all, graph=gdb):
     """
 
@@ -123,7 +111,7 @@ def resolve_relations(art_id, doc, ents_all, graph=gdb):
         # Help function for convenience
         # print(list(sorted([tuple(i) for i in sents_bound_tree.all_intervals], key=lambda t: t[0])))
         # print(ent)
-        sents = sents_bound_tree[ent[0]:ent[1]]
+        sents = sents_bound_tree[ent.start_char:ent.end_char]
         if sents: return sents.pop().data
 
     ents_in_sents = groupby(index, ents_all)
@@ -136,7 +124,7 @@ def resolve_relations(art_id, doc, ents_all, graph=gdb):
             r_uris = list(graph.predicates(s.uri, o.uri))
             if len(r_uris) == 0: r_uris.append('')
             for r_uri in r_uris:
-                yield RelationRecord(s.uri, r_uri, o.uri, s.start, s.end, o.start, o.end,
+                yield RelationRecord(s.uri, r_uri, o.uri, s.start_char, s.end_char, o.start_char, o.end_char,
                                      sent.text, sent.start_char, sent.end_char, source_id=art_id)
 
 

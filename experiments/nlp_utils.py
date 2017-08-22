@@ -2,8 +2,20 @@ import logging as log
 from itertools import chain
 
 from intervaltree import IntervalTree, Interval
-import spacy
 from nltk.corpus import wordnet as wn
+
+
+def merge_ents_offsets(primal_ents, other_ents):
+    """
+    Merge ent lists with non-overlapping entries, giving precedence to primal_ents.
+    :param primal_ents: iterable of tuples of form (begin_offset, end_offset, data)
+    :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
+    :return: merged list of ents
+    """
+    ents_tree = IntervalTree.from_tuples(e for e in primal_ents if e.start_char < e.end_char)
+    ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent.start_char, ent.end_char)]
+    ents_filtered.extend(primal_ents)
+    return ents_filtered
 
 
 def is_connected(span):
@@ -138,5 +150,3 @@ def get_hypernym_cls(token):
 
 def get_hypernym_classes(nlp_vocab):
     return {synset.lexname() for lexem in nlp_vocab for synset in wn.synsets(lexem.text)}
-
-
