@@ -113,17 +113,20 @@ def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
 
 
 def main():
+    import os
     from experiments.data_utils import split, unpickle
-    from experiments.ontology.data import transform_ner_dataset, nlp
+    from experiments.ontology.data import transform_ner_dataset
+    from experiments.ontology.config import config
 
     random.seed(2)
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
     log.info('train_ner: starting loading...')
-    dataset_dir = '/home/user/datasets/dbpedia/ner/'
-    dataset_file = 'crecords.v2.pck'
-    # dataset = list(islice(unpickle(dataset_dir + dataset_file), 400))
-    dataset = list(unpickle(dataset_dir + dataset_file))
+    nlp = spacy.load('en_core_web_sm')
+    data_dir = config['data']['dir']
+    dataset_file = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
+    # dataset = list(islice(unpickle(dataset_file), 400))
+    dataset = list(unpickle(dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
                                          allowed_ent_types=ALL_ENT_CLASSES, min_ents=40, min_ents_ratio=0.04))
     random.shuffle(dataset)
@@ -131,11 +134,11 @@ def main():
     # ts_data = dataset
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 20
-    epoch_size = 5
+    epochs = 40
+    epoch_size = 1
     start_epoch = 1  # for proper model saving when continuing training
     base_lr = 0.01
-    decay_step = 5  # decay every `decay_step` epochs
+    decay_step = 10  # decay every `decay_step` epochs
 
     nlp2 = nlp  # loading plain spacy model
     # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)

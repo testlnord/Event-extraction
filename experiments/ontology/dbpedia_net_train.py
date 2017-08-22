@@ -110,26 +110,26 @@ def main():
 
     random.seed(2)
     batch_size = 1
-    epochs = 5
+    epochs = 4
 
     # Load our data
-    model_name = 'noner.dr.noaug.v5.1.c3.all.inv'
-    sclasses = RC_CLASSES_MAP_ALL
-    inverse = RC_INVERSE_MAP
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-    train_data, val_data = get_dbp_data(sclasses, batch_size)
+    # model_name = 'noner.dr.noaug.v5.3.c3.all.inv'
+    # sclasses = RC_CLASSES_MAP_ALL
+    # inverse = RC_INVERSE_MAP
+    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
+    # train_data, val_data = get_dbp_data(sclasses, batch_size)
 
     # Load benchmark data (kbp37)
-    # model_name = 'noner.dr.noaug.kbp.v5.2'
+    # model_name = 'noner.dr.noaug.kbp.v5.2.c3'
     # sclasses = KBP37_CLASSES_MAP
     # encoder = DBPediaEncoder(nlp, sclasses)
     # train_data, val_data = get_kbp37_data(sclasses)
 
     # Load benchmark data (semeval)
-    # model_name = 'noner.dr.noaug.semeval.v7.c3'
-    # sclasses = SEMEVAL_CLASSES_MAP
-    # encoder = DBPediaEncoder(nlp, sclasses)
-    # train_data, val_data = get_semeval_data(sclasses)
+    model_name = 'noner.dr.noaug.semeval.v5.3.c3'
+    sclasses = SEMEVAL_CLASSES_MAP
+    encoder = DBPediaEncoder(nlp, sclasses)
+    train_data, val_data = get_semeval_data(sclasses)
 
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
@@ -149,7 +149,7 @@ def main():
     net._model.summary(line_length=80)
 
     # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
-    net.train(train_data[14:], epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
+    net.train(train_data, epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
 
     test_data = val_data
     prob_threshold = 0.5

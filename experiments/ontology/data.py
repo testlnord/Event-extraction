@@ -21,6 +21,7 @@ from experiments.ontology.sub_ont import dbo, dbr, gf, gdb
 from experiments.ontology.sub_ont import get_article, get_label
 
 
+# todo: change to 'start_char', 'end_char' and refactor resolve_relations
 EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
 
 
