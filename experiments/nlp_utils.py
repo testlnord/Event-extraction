@@ -115,15 +115,28 @@ wordnet_pos_allowed = {
 }
 
 
-def get_hypernym(nlp, token):
+def get_hypernym_raw(token):
     pos = wordnet_pos_allowed.get(token.pos_)
     if pos is not None:
         synsets = wn.synsets(token.text, pos)
-        if len(synsets) > 0:
+        if synsets:
             hs = synsets[0].hypernyms()
-            h = hs[0] if len(hs) > 0 else synsets[0]
-            # h.lexname is also interesting
-            raw = h.lemma_names()[0].replace('_', ' ')  # wordnet representation uses '_' instead of space
-            return nlp(raw)  # wordnet lemmas can consist out of several words, so, nlp.vocab[raw] is not suitable
+            return hs[0] if hs else synsets[0]
+
+
+def get_hypernym(nlp, token):
+    h = get_hypernym_raw(token)
+    if h:
+        raw = h.lemma_names()[0].replace('_', ' ')  # wordnet representation uses '_' instead of space
+        return nlp(raw)  # wordnet lemmas can consist out of several words, so, nlp.vocab[raw] is not suitable
+
+
+def get_hypernym_cls(token):
+    h = get_hypernym_raw(token)
+    if h: return h.lexname()
+
+
+def get_hypernym_classes(nlp_vocab):
+    return {synset.lexname() for lexem in nlp_vocab for synset in wn.synsets(lexem.text)}
 
 

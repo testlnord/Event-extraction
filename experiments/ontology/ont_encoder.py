@@ -4,8 +4,10 @@ from itertools import product
 import numpy as np
 
 from experiments.tags import CategoricalTags
-from experiments.ontology.symbols import POS_TAGS, DEP_TAGS, IOB_TAGS, NER_TAGS
+from experiments.ontology.symbols import POS_TAGS, DEP_TAGS, IOB_TAGS, NER_TAGS, ALL_ENT_CLASSES, WORDNET_HYPERNYM_CLASSES
+from experiments.ontology.linker import NERTypeResolver
 from experiments.nlp_utils import *
+
 
 
 def crecord2spans(crecord, nlp):
@@ -14,11 +16,12 @@ def crecord2spans(crecord, nlp):
 
 class DBPediaEncoder:
     def __init__(self, nlp, superclass_map, inverse_relations=None,
-                 expand_context=1, expand_noun_chunks=False):
+                 expand_context=0, expand_noun_chunks=False):
         """
         Encodes the data into the suitable for the Keras format. Uses Shortest Dependency Tree (SDP) assumption.
         :param nlp:
         :param superclass_map: mapping of base relation types (uris) into final relation types used for classification
+        :param inverse_relations: mapping between relations and their inverse (symmetric) relations
         :param expand_context: expand context around key tokens in SDP
         :param expand_noun_chunks: whether to expand parts of noun chunks in SDP into full noun chunks
         """
@@ -46,8 +49,11 @@ class DBPediaEncoder:
         self.ner_tags = CategoricalTags(sorted(NER_TAGS), default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(sorted(POS_TAGS))
         self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
+        self.wn_tags = CategoricalTags(sorted(WORDNET_HYPERNYM_CLASSES), default_tag='')
         self._expand_context = expand_context
-        self.expand_noun_chunks = expand_noun_chunks
+        self._expand_noun_chunks = expand_noun_chunks
+
+        self.last_sdp = self.last_sdp_root = None
 
     @property
     def channels(self):
@@ -56,7 +62,9 @@ class DBPediaEncoder:
     @property
     def vector_length(self):
         wv = self.wordvec_length
-        return len(self.iob_tags), len(self.ner_tags), len(self.pos_tags), len(self.dep_tags), wv
+        ners = len(self.ner_tags)
+        # return [len(self.iob_tags), ners, len(self.pos_tags), len(self.dep_tags), wv, ners]
+        return [len(self.iob_tags), ners, len(self.pos_tags), len(self.dep_tags), len(self.wn_tags), wv, ners]
 
     @property
     def wordvec_length(self):
@@ -78,19 +86,20 @@ class DBPediaEncoder:
         :return: encoded data (tuple of arrays)
         """
         sdp, self.last_sdp_root = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
-        sdp = expand_ents(sdp, self.expand_noun_chunks)
+        sdp = expand_ents(sdp, self._expand_noun_chunks)
         self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
         _iob_tags = []
         _ner_tags = []
         _pos_tags = []
         _dep_tags = []
-        _vectors = []
         _wn_hypernyms = []
+        _vectors = []
         for t in sdp:
             log.debug('token: {}; ent_type_: {}; dep_: {}; pos_: {};'.format(t.text, t.ent_type_, t.dep_, t.pos_))
             _iob_tags.append(self.iob_tags.encode(t.ent_iob_))
             _ner_tags.append(self.ner_tags.encode(t.ent_type_))
             _pos_tags.append(self.pos_tags.encode(t.pos_))
+            _wn_hypernyms.append(self.wn_tags.encode(get_hypernym_cls(t)))
             _vectors.append(t.vector)
             # Dependency tags by spacy
             dep_vars = t.dep_.split('||')
@@ -100,12 +109,20 @@ class DBPediaEncoder:
             # Use all dep types provided by dep parser...
             dep = sum(np.array(self.dep_tags.encode(dep_var)) for dep_var in dep_vars)
             _dep_tags.append(dep)
-            # WordNet hypernyms' word vectors
-            # hyp = get_hypernym(self.nlp, t)
-            # _wn_hypernyms.append(np.zeros(self.wordvec_length) if hyp is None else hyp.vector)
-        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, _wn_hypernyms
-        data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors
+
+        s_type = self.ner_tags.encode(s_span.label_)
+        o_type = self.ner_tags.encode(o_span.label_)
+        s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
+        o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
+
+        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, s_type_out + o_type_out
+        data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
         return tuple(map(np.array, data))
+
+    def _encode_ent_position(self, ent_span, ent_indicator, zero_indicator):
+        ent_indices = {token.i for token in ent_span}
+        res = [ent_indicator if token.i in ent_indices else zero_indicator for token in self.last_sdp]
+        return res
 
     def encode_raw_class(self, crecord):
         rel_cls = self.classes.get(str(crecord.relation))
@@ -131,10 +148,15 @@ class DBPediaEncoder:
 
 
 class DBPediaEncoderWithEntTypes(DBPediaEncoder):
-    from experiments.ontology.linker import NERTypeResolver
-    from experiments.ontology.symbols import ENT_CLASSES
-    _ner_type_resolver = NERTypeResolver()
-    _ent_tags = CategoricalTags(sorted(ENT_CLASSES), default_tag='')
+    def __init__(self, nlp, superclass_map, inverse_relations=None,
+                 expand_context=1, expand_noun_chunks=False,
+                 ner_type_resolver=NERTypeResolver()):
+        super().__init__(nlp, superclass_map, inverse_relations, expand_context, expand_noun_chunks)
+        self._ner_type_resolver = ner_type_resolver
+        raw_ent_tags = list(sorted(set(ner_type_resolver.final_classes_names.values())))  # same as symbols.ENT_CLASSES
+        self._ent_tags = CategoricalTags(raw_ent_tags, default_tag='')
+        # self._ent_tags = self.ner_tags
+        assert all(cls in self._ent_tags.raw_tags for cls in ner_type_resolver.final_classes_names.values())
 
     def _encode_type(self, uri):
         return self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
@@ -142,39 +164,22 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
     @property
     def vector_length(self):
         _vl = super().vector_length
-        _l = len(self._ent_tags)
-        return (*_vl, _l, _l)
-
-    # todo: linking with existing uri should happen here
-    # def encode_data(self, s_span, o_span):
-    #     data = super().encode_data(s_span, o_span)
-    #     uri = None
-    #     s_type = self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
-    #     o_type = self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
+        _vl[-1] = len(self._ent_tags)
+        return _vl
 
     def encode(self, crecord):
         s_span, o_span = crecord2spans(crecord, self.nlp)
-
-        # Set the entities types on crecord's doc here as ground truth
-        #   and call data.encode_data() which will use these anno
+        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
 
-        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
         s_type = self._encode_type(crecord.subject)
         o_type = self._encode_type(crecord.object)
-        len_output = len(self.last_sdp)
+        s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
+        o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
 
-        # Feed entity types only on the corresponding to entity spans time steps
-        s_type_out = [np.zeros_like(s_type)] * len_output; s_indices = {token.i for token in s_span}
-        o_type_out = [np.zeros_like(o_type)] * len_output; o_indices = {token.i for token in o_span}
-        for i, token in enumerate(self.last_sdp):
-            if token.i in s_indices: s_type_out[i] = s_type
-            if token.i in o_indices: o_type_out[i] = o_type
-
-        # s_type_out = [s_type] * len_output  # feeding type on each timestep
-        # o_type_out = [o_type] * len_output  # feeding type on each timestep
-        yield (*data, np.array(s_type_out), np.array(o_type_out), *cls)
+        # Cut the last channel of 'data' as we overwrite it
+        yield (*data[:-1], s_type_out + o_type_out, *cls)
 
 
 class DBPediaEncoderBranched(DBPediaEncoder):
@@ -227,29 +232,6 @@ if __name__ == "__main__":
     from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
     from experiments.ontology.config import config
-
-    # Pipeline:
-    # doc = nlp(text)
-    # linked_doc = link_ents(doc)
-    # rel_candidates = generate_candidates(linked_doc)
-    #   there could be some already present in the ontology candidates...
-    # rel_preds = model.predict(rel_candidates)
-    #   filter unsure ones
-
-    # load nlp model (our?)
-    #   ! align with symbols classes
-    #       ? some test of nlp classes? or somehow get them...
-    # inst encoder
-    #   load classes from symbols
-    #   ! link linker to encoder
-    #       load linker model
-    #   ner type resolver
-    # inst net, load it's model
-
-    # global things:
-    #   graphs & namespaces
-    #   nlp
-    #   linker, type resolver
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 

@@ -45,10 +45,14 @@ class CategoricalTags(Tags):
     def raw_tags(self):
         return list(self.tag_map.keys())
 
-    def encode(self, raw_tag):
+    def encode_index(self, raw_tag):
         index = self.tag_map.get(raw_tag, self._default_tag_index)
         if index is None:
             raise KeyError('Invalid (unknown) tag provided and default tag is not set: {}'.format(raw_tag))
+        return index
+
+    def encode(self, raw_tag):
+        index = self.encode_index(raw_tag)
         if self.nbtags > 1:
             cat = [0] * self.nbtags
             cat[index] = 1
