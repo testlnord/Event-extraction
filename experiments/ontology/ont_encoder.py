@@ -95,7 +95,6 @@ class DBPediaEncoder:
         _wn_hypernyms = []
         _vectors = []
         for t in sdp:
-            log.debug('token: {}; ent_type_: {}; dep_: {}; pos_: {};'.format(t.text, t.ent_type_, t.dep_, t.pos_))
             _iob_tags.append(self.iob_tags.encode(t.ent_iob_))
             _ner_tags.append(self.ner_tags.encode(t.ent_type_))
             _pos_tags.append(self.pos_tags.encode(t.pos_))
@@ -144,7 +143,8 @@ class DBPediaEncoder:
         s_span, o_span = crecord2spans(crecord, self.nlp)
         data = self.encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
-        yield (*data, *cls)
+        if data and cls:
+            yield (*data, *cls)
 
 
 class DBPediaEncoderWithEntTypes(DBPediaEncoder):
@@ -173,16 +173,53 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
 
-        s_type = self._encode_type(crecord.subject)
-        o_type = self._encode_type(crecord.object)
-        s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
-        o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
+        if data and cls:
+            s_type = self._encode_type(crecord.subject)
+            o_type = self._encode_type(crecord.object)
+            s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
+            o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
 
-        # Cut the last channel of 'data' as we overwrite it
-        yield (*data[:-1], s_type_out + o_type_out, *cls)
+            # Cut the last channel of 'data' as we overwrite it
+            yield (*data[:-1], s_type_out + o_type_out, *cls)
 
 
-class DBPediaEncoderBranched(DBPediaEncoder):
+class DBPediaEncoderEmbed(DBPediaEncoder):
+    def encode_data(self, s_span, o_span):
+        """
+        Encode data having entity spans (underlying doc is used implicitly by the means of dependency tree traversal)
+        :param s_span: subject span
+        :param o_span: object span
+        :return: encoded data (tuple of arrays)
+        """
+        sdp, self.last_sdp_root = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
+        sdp = expand_ents(sdp, self._expand_noun_chunks)
+        self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
+
+        _iob_tags = []
+        _ner_tags = []
+        _pos_tags = []
+        _dep_tags = []
+        _wn_hypernyms = []
+        _vectors = []
+        for t in sdp:
+            _iob_tags.append(self.iob_tags.encode_index(t.ent_iob_))
+            _ner_tags.append(self.ner_tags.encode_index(t.ent_type_))
+            _pos_tags.append(self.pos_tags.encode_index(t.pos_))
+            _dep_tags.append(self.dep_tags.encode_index(t.dep_.split('||')[0]))
+            _wn_hypernyms.append(self.wn_tags.encode_index(get_hypernym_cls(t)))
+            _vectors.append(t.vector)
+
+        s_type = self.ner_tags.encode_index(s_span.label_)
+        o_type = self.ner_tags.encode_index(o_span.label_)
+        s_type_out = np.array(self._encode_ent_position(s_span, s_type, 0))
+        o_type_out = np.array(self._encode_ent_position(o_span, o_type, 0))
+
+        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, s_type_out + o_type_out
+        data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
+        return tuple(map(np.array, data))
+
+
+class DBPediaEncoderBranched(DBPediaEncoderEmbed):
     @property
     def vector_length(self):
         _vl = super().vector_length
@@ -191,9 +228,10 @@ class DBPediaEncoderBranched(DBPediaEncoder):
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
         i = self.last_sdp_root
-        left_part = [d[:i+1] for d in data]
-        right_part = [d[i:] for d in data]
-        return left_part + right_part
+        if 0 < i < len(self.last_sdp):
+            left_parts = [d[:i+1] for d in data]
+            right_parts = [d[i:] for d in data]
+            return left_parts + right_parts
 
 
 # deprecated todo: change or remove

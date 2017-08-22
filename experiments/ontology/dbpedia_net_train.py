@@ -5,7 +5,7 @@ from itertools import cycle
 
 from experiments.dl_utils import print_confusion_matrix
 from experiments.data_utils import unpickle, split, visualise
-from experiments.ontology.ont_encoder import DBPediaEncoder, DBPediaEncoderWithEntTypes
+from experiments.ontology.ont_encoder import *
 from experiments.ontology.dbpedia_net import DBPediaNet
 
 
@@ -113,22 +113,25 @@ def main():
     epochs = 4
 
     # Load our data
-    # model_name = 'noner.dr.noaug.v5.3.c3.all.inv'
     # sclasses = RC_CLASSES_MAP_ALL
     # inverse = RC_INVERSE_MAP
+    # model_name = 'noner.dr.noaug.v5.3.c3.all.inv'
     # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
     # train_data, val_data = get_dbp_data(sclasses, batch_size)
 
     # Load benchmark data (kbp37)
-    # model_name = 'noner.dr.noaug.kbp.v5.2.c3'
     # sclasses = KBP37_CLASSES_MAP
+    # model_name = 'noner.dr.noaug.kbp.v5.2.c3'
     # encoder = DBPediaEncoder(nlp, sclasses)
     # train_data, val_data = get_kbp37_data(sclasses)
 
     # Load benchmark data (semeval)
-    model_name = 'noner.dr.noaug.semeval.v5.3.c3'
     sclasses = SEMEVAL_CLASSES_MAP
-    encoder = DBPediaEncoder(nlp, sclasses)
+    # model_name = 'noner.dr.noaug.semeval.v5.3.1.c3'
+    # encoder = DBPediaEncoder(nlp, sclasses)
+    model_name = 'noner.dr.noaug.semeval.v6.1.c4b'
+    encoder = DBPediaEncoderBranched(nlp, sclasses)
+    # encoder = DBPediaEncoderEmbed(nlp, sclasses)
     train_data, val_data = get_semeval_data(sclasses)
 
     train_steps = len(train_data) // batch_size
@@ -141,7 +144,8 @@ def main():
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
     # net.compile2()
-    net.compile3()
+    # net.compile3()
+    net.compile4()
     # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 3)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
@@ -162,5 +166,5 @@ def main():
 if __name__ == "__main__":
     from experiments.ontology.data_structs import RelationRecord, RelRecord
 
-    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.DEBUG)
     main()
