@@ -2,6 +2,7 @@ import logging as log
 from itertools import product
 
 import numpy as np
+from spacy.tokens import Span
 
 from experiments.tags import CategoricalTags
 from experiments.ontology.symbols import POS_TAGS, DEP_TAGS, IOB_TAGS, NER_TAGS, ALL_ENT_CLASSES, WORDNET_HYPERNYM_CLASSES
@@ -9,9 +10,31 @@ from experiments.ontology.linker import NERTypeResolver
 from experiments.nlp_utils import *
 
 
-
-def crecord2spans(crecord, nlp):
+def crecord2spans_old(crecord, nlp):
     return chars2spans(nlp(crecord.context), crecord.s_spanr, crecord.o_spanr)
+
+
+def crecord2spans(cr, nlp, ntr):
+    """
+    Get token offsets using char offsets and merge entity annotations here with spacy's using ner_type_resolver
+    :param cr: RelationRecord
+    :param nlp: spacy model
+    :param ntr: NERTypeResolver
+    :return: Tuple[spacy.token.Span, spacy.token.Span]
+    """
+    doc = nlp(cr.context)
+    spans = chars2spans(doc, cr.s_spanr, cr.o_spanr)
+    uris = [cr.subject_uri, cr.object_uri]
+
+    _v_ = nlp.vocab.strings
+    true_ents = []
+    for span, uri in zip(spans, uris):
+        label_str = ntr.get_by_uri(uri, default_type='')
+        label_id = _v_[label_str] if label_str in _v_ else 0  # not modifying StringStore
+        true_ents.append(Span(doc=doc, start=span.start, end=span.end, label=label_id))
+    corrected_ents = merge_ents_offsets(true_ents, doc.ents)
+    doc.ents = corrected_ents
+    return true_ents
 
 
 class DBPediaEncoder:
@@ -54,6 +77,7 @@ class DBPediaEncoder:
         self._expand_noun_chunks = expand_noun_chunks
 
         self.last_sdp = self.last_sdp_root = None
+        self.ntr = NERTypeResolver()  # todo: temp. move to constructor. for crecord2spans
 
     @property
     def channels(self):
@@ -140,7 +164,8 @@ class DBPediaEncoder:
         return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode() todo: remove
 
     def encode(self, crecord):
-        s_span, o_span = crecord2spans(crecord, self.nlp)
+        s_span, o_span = crecord2spans_old(crecord, self.nlp)
+        # s_span, o_span = crecord2spans(crecord, self.nlp, self.ntr)
         data = self.encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
         if data and cls:
@@ -168,7 +193,7 @@ class DBPediaEncoderWithEntTypes(DBPediaEncoder):
         return _vl
 
     def encode(self, crecord):
-        s_span, o_span = crecord2spans(crecord, self.nlp)
+        s_span, o_span = crecord2spans_old(crecord, self.nlp)
         # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
         data = super().encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
@@ -209,14 +234,18 @@ class DBPediaEncoderEmbed(DBPediaEncoder):
             _wn_hypernyms.append(self.wn_tags.encode_index(get_hypernym_cls(t)))
             _vectors.append(t.vector)
 
-        s_type = self.ner_tags.encode_index(s_span.label_)
-        o_type = self.ner_tags.encode_index(o_span.label_)
-        s_type_out = np.array(self._encode_ent_position(s_span, s_type, 0))
-        o_type_out = np.array(self._encode_ent_position(o_span, o_type, 0))
+        s_type = self.ner_tags.encode(s_span.label_)
+        o_type = self.ner_tags.encode(o_span.label_)
+        s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
+        o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
 
-        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, s_type_out + o_type_out
         data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
         return tuple(map(np.array, data))
+
+    # @property
+    # def embedding_channels(self):
+    #     """Channels supposed to be embedded"""
+    #     return list(range(self.channels[:-2]))
 
 
 class DBPediaEncoderBranched(DBPediaEncoderEmbed):
@@ -225,40 +254,18 @@ class DBPediaEncoderBranched(DBPediaEncoderEmbed):
         _vl = super().vector_length
         return (*_vl, *_vl)
 
+    # @property
+    # def embedding_channels(self):
+    #     _ch = super().embedding_channels
+    #     return (*_ch, *_ch)
+
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
         i = self.last_sdp_root
-        if 0 < i < len(self.last_sdp):
+        if 0 <= i < len(self.last_sdp):
             left_parts = [d[:i+1] for d in data]
             right_parts = [d[i:] for d in data]
             return left_parts + right_parts
-
-
-# deprecated todo: change or remove
-class EncoderDataAugmenter:
-    """Wrapper of DBPediaEncoder for data augmentation."""
-    def __init__(self, encoder, inverse_map):
-        """
-        :param encoder: DBPediaEncoder or its' subclass
-        :param inverse_map: mapping of final relation types into their inverse relation types (used for data augmentation)
-        """
-        self.inverse_map = inverse_map
-        self.encoder = encoder
-
-    def encode(self, crecord):
-        e = self.encoder
-        s_span, o_span = crecord2spans(crecord, e.nlp)
-        data = e.encode_data(s_span, o_span)
-        cls = e.encode_class(crecord)
-        yield (*data, *cls)
-
-        rr = self.inverse_map.get(crecord.r)
-        crecord.r = rr
-        if rr is not None:
-            rcls = e.encode_class(crecord)
-            # todo: change data somewhow to reflect the change in the directionality of relation
-            rdata = map(np.flipud, data)  # reverse all arrays
-            yield (*rdata, *rcls)
 
 
 if __name__ == "__main__":
@@ -273,16 +280,19 @@ if __name__ == "__main__":
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
+    # nlp = spacy.load(**config['models']['nlp'])
+    model_dir = 'models.v5.4.i5.epoch2'
+    nlp = spacy.load('en', path=model_dir)
+
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
-    nlp = spacy.load(**config['models']['nlp'])
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
 
     data_dir = config['data']['dir']
     rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
     rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
-    dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
-    print('total with filtered classes:', len(dataset))
+    # dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
+    # print('total with filtered classes:', len(dataset))
 
     dataset = list(unpickle(rc_out))
     _valid = [rr for rr in dataset if rr.valid_offsets]
@@ -291,15 +301,11 @@ if __name__ == "__main__":
     print('VALID:', len(_valid))
     print('(BAD:', len(dataset) - len(_valid), ')')
     print('VALID FILTERED:', len(_fc))
-    input('press enter to proceed...')
+    # input('press enter to proceed...')
 
     bad = 0
+    ntr = NERTypeResolver()
     for i, record in enumerate(_fc):
-        text = record.context.strip()
-        xs = record.s_startr
-        s = text[xs:record.s_endr]
-        xo = record.o_startr
-        o = text[xo:record.o_endr]
-        print('t:', text)
-        print('s:', s, 'true:', str(record.subject))
-        print('o:', o, 'true:', str(record.object))
+        print(i)
+        s_span, o_span = crecord2spans(record, nlp, ntr)
+
