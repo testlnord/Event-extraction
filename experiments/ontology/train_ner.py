@@ -63,7 +63,14 @@ def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_co
     _nlp.end_training()
 
 
-def save_model(_nlp, model_dir):
+def save_model(_nlp, model_dir, save_vectors=True, vectors_symlink=False):
+    """
+    :param _nlp:
+    :param model_dir:
+    :param save_vectors:
+    :param vectors_symlink: whether symlink to old word vectors location
+    :return:
+    """
     model_dir = pathlib.Path(model_dir)
     if not model_dir.exists():
         model_dir.mkdir()
@@ -71,18 +78,16 @@ def save_model(_nlp, model_dir):
 
     _nlp.save_to_directory(model_dir)
 
-    ner = _nlp.entity
-    with (model_dir / 'config.json').open('wb') as file_:
-        data = json.dumps(ner.cfg)
-        if isinstance(data, str):
-            data = data.encode('utf8')
-        file_.write(data)
-    ner.model.dump(str(model_dir / 'model'))
-    if not (model_dir / 'vocab').exists():
-        (model_dir / 'vocab').mkdir()
-    ner.vocab.dump(str(model_dir / 'vocab' / 'lexemes.bin'))
-    with (model_dir / 'vocab' / 'strings.json').open('w', encoding='utf8') as file_:
-        ner.vocab.strings.dump(file_)
+    if save_vectors:
+        vectors_path = _nlp.path / 'vocab' / 'vec.bin'
+        if vectors_path.exists():
+            new_vectors_path = model_dir / 'vocab' / 'vec.bin'
+            if vectors_symlink:
+                new_vectors_path.symlink_to(vectors_path)
+            else:
+                _nlp.vocab.dump_vectors(str(new_vectors_path))
+        else:
+            log.warning('save_model: word vectors not found at path {}! nothing to save.'.format(str(vectors_path)))
 
 
 def get_preds(updated_nlp, test_data, nil='O', print_=False):
