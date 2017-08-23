@@ -235,14 +235,14 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NE
                           min_ents=0, min_ents_ratio=0., n_threads=8, batch_size=1000):
     """
     Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entity types with ours.
-    Data is yielded if at least one of the conditions (min_ents or min_ents_ration) is satisfied.
+    Data is yielded if both conditions (min_ents or min_ents_ration) are satisfied.
     By default all data is yielded (even if there're no entities).
     :param nlp: spacy.lang.Language
     :param crecords: dataset (iterable of ContextRecord-s)
     :param allowed_ent_types: what types to leave from spacy entity recogniser. Don't use spacy ner types altogether if empty
     :param ner_type_resolver: class governing mapping from entity uris to final entity types
-    :param min_ents: minimum number of type-resolved entities in crecord to yield it
-    :param min_ents_ratio: minimum ratio of number of type-resolved entities to number of tokens in crecord to yield it
+    :param min_ents: minimum number of type-resolved entities in sentence to yield it
+    :param min_ents_ratio: minimum ratio of number of type-resolved entities to number of tokens in sentence to yield it
     :param n_threads: n_threads parameter for nlp.pipe() and multiprocessing.Pool
     :param batch_size: batch_size parameter for nlp.pipe()
     :yield: list of json entities for spacy NER training (with already made Docs)
