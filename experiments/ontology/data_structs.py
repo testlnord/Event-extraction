@@ -130,8 +130,14 @@ class EntityRecord:
         self.uri = uri
 
     @property
+    def start_char(self): return self.start
+
+    @property
+    def end_char(self): return self.end
+
+    @property
     def text(self):
-        return self.crecord.context[slice(*self.span)]
+        return self.crecord.context[self.start: self.end]
 
     @property
     def span(self):
@@ -171,6 +177,12 @@ class ContextRecord:
         self.start = self.start + begin
         for e in self.ents:
             e.cut_context(begin, end)
+
+    @property
+    def start_char(self): return self.start
+
+    @property
+    def end_char(self): return self.end
 
     @property
     def span(self):

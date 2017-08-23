@@ -133,17 +133,17 @@ def main():
     # dataset = list(islice(unpickle(dataset_file), 400))
     dataset = list(unpickle(dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
-                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=40, min_ents_ratio=0.04))
+                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=1))
     random.shuffle(dataset)
     tr_data, ts_data = split(dataset, (0.9, 0.1))
     # ts_data = dataset
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 40
+    epochs = 20
     epoch_size = 1
     start_epoch = 1  # for proper model saving when continuing training
     base_lr = 0.01
-    decay_step = 10  # decay every `decay_step` epochs
+    decay_step = 5  # decay every `decay_step` epochs
 
     nlp2 = nlp  # loading plain spacy model
     # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)

@@ -252,27 +252,31 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NE
     docs = nlp.pipe([cr.context for cr in crecords], n_threads=n_threads, batch_size=batch_size)
 
     with Pool(processes=n_threads) as pool:
-        for cr, doc in zip(crecords, docs):
+        for i, (cr, doc) in enumerate(zip(crecords, docs)):
             # Resolve entity types in parallel
             uris = [er.uri for er in cr.ents]
             ent_types = pool.map(ner_type_resolver.get_by_uri, uris)
             # ent_types = map(ner_type_resolver.get_by_uri, uris)  # sequential version
 
-            ents = [(er.start, er.end, ent_type) for er, ent_type in zip(cr.ents, ent_types) if ent_type is not None]
+            doc_ents = [EntityMention(er.start, er.end, ent_type) for er, ent_type in zip(cr.ents, ent_types) if ent_type is not None]
+            our_sents_ents = sentences_ents(doc, doc_ents)
+            all_spacy_ents = [EntityMention(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
+            spacy_sents_ents = sentences_ents(doc, all_spacy_ents)
 
-            # Proceed only if there're enough entities
-            nb_our_ents = len(ents)
-            ents_ratio = nb_our_ents / len(doc)
-            log_str = 'transform ner: ents_ratio: {:.2f}; our ents: {:4d}'.format(ents_ratio, nb_our_ents)
-            if nb_our_ents >= min_ents or ents_ratio >= min_ents_ratio:
-                # Add entities recognised by spacy if they aren't overlapping with any of our entities
-                spacy_ents = [(e.start_char, e.end_char, e.label_) for e in doc.ents if e.label_ in etypes]
-                ents = merge_ents_offsets(ents, spacy_ents)
-                yield doc, ents
+            for (sent, sent_ents), (sent, spacy_ents) in zip(our_sents_ents, spacy_sents_ents):
+                nb_our_ents = len(sent_ents)
+                ents_ratio = nb_our_ents / len(sent)
+                log_str = 'transform ner: doc #{}: ents_ratio: {:.2f}; our ents: {:2d}'.format(i, ents_ratio, nb_our_ents)
 
-                yielded += 1
-                log_str += ' (yielding #{:4d}: spacy ents: {:4d}; total ents: {:4d})'.format(yielded, len(spacy_ents), len(ents))
-            log.info(log_str)
+                # Proceed only if there're enough entities
+                if nb_our_ents >= min_ents and ents_ratio >= min_ents_ratio:
+                    # Add entities recognised by spacy if they don't overlap any of our entities
+                    sent_ents = merge_ents_offsets(sent_ents, spacy_ents)
+                    yield sent, list(map(tuple, sent_ents))
+
+                    yielded += 1
+                    log_str += ' (yield #{}: spacy ents: {:2d}; total ents: {:2d})'.format(yielded, len(spacy_ents), len(sent_ents))
+                log.info(log_str)
 
 
 def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
