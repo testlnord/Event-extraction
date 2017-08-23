@@ -107,32 +107,35 @@ def main():
     import spacy
     from experiments.ontology.config import config
     nlp = spacy.load(**config['models']['nlp'])
+    # model_dir = 'models.v5.4.i5.epoch2'
+    # nlp = spacy.load('en', path=model_dir)  # todo: where're the word vectors???
 
     random.seed(2)
     batch_size = 1
-    epochs = 4
+    epochs = 6
 
     # Load our data
     # sclasses = RC_CLASSES_MAP_ALL
     # inverse = RC_INVERSE_MAP
-    # model_name = 'noner.dr.noaug.v5.3.c3.all.inv'
+    # model_name = 'noner.dr.noaug.v6.3.c4.all.inv'
     # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
     # train_data, val_data = get_dbp_data(sclasses, batch_size)
 
     # Load benchmark data (kbp37)
-    # sclasses = KBP37_CLASSES_MAP
-    # model_name = 'noner.dr.noaug.kbp.v5.2.c3'
-    # encoder = DBPediaEncoder(nlp, sclasses)
-    # train_data, val_data = get_kbp37_data(sclasses)
+    sclasses = KBP37_CLASSES_MAP
+    model_name = 'noner.dr.noaug.kbp.v5.3.c3'
+    encoder = DBPediaEncoder(nlp, sclasses)
+    # encoder = DBPediaEncoderEmbed(nlp, sclasses)
+    train_data, val_data = get_kbp37_data(sclasses)
 
     # Load benchmark data (semeval)
-    sclasses = SEMEVAL_CLASSES_MAP
+    # sclasses = SEMEVAL_CLASSES_MAP
     # model_name = 'noner.dr.noaug.semeval.v5.3.1.c3'
     # encoder = DBPediaEncoder(nlp, sclasses)
-    model_name = 'noner.dr.noaug.semeval.v6.1.c4b'
-    encoder = DBPediaEncoderBranched(nlp, sclasses)
+    # model_name = 'noner.dr.noaug.semeval.v6.3.1.c4'
+    # encoder = DBPediaEncoderBranched(nlp, sclasses)
     # encoder = DBPediaEncoderEmbed(nlp, sclasses)
-    train_data, val_data = get_semeval_data(sclasses)
+    # train_data, val_data = get_semeval_data(sclasses)
 
     train_steps = len(train_data) // batch_size
     val_steps = len(val_data) // batch_size
@@ -143,23 +146,21 @@ def main():
 
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    # net.compile2()
-    # net.compile3()
-    net.compile4()
-    # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 3)
+    net.compile3()
+    # net.compile4(l2=1e-5)
+    # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 7)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
 
-    # net.train(cycle(train_data), epochs, train_steps, cycle(val_data), val_steps, model_prefix=model_name)
     net.train(train_data, epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
 
     test_data = val_data
     prob_threshold = 0.5
     hits, misses = eye_test(net, test_data, prob_threshold=prob_threshold)
     print('rights: {}/{} with prob_threshold={}'.format(len(hits), len(test_data), prob_threshold))
-    # evals = net.evaluate(cycle(val_data), val_steps)  # NB: remember about cycle()
+    # evals = net.evaluate(val_data, val_steps)  # NB: remember about cycle()
     # print('evaluated: {}'.format(evals))
 
 

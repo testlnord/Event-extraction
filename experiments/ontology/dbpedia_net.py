@@ -5,6 +5,7 @@ import numpy as np
 from keras.models import Model
 from keras.layers import Dense, LSTM, Input, Concatenate, Embedding, \
     Dropout, TimeDistributed, Bidirectional, MaxPooling1D, GlobalMaxPooling1D
+from keras import regularizers
 
 from experiments.sequencenet import SequenceNet
 
@@ -74,19 +75,15 @@ class DBPediaNet(SequenceNet):
     def compile3(self, dr=0.5, rdr=0.5):
         input_lens = self._encoder.vector_length
         min_units = 32
-        # max_units = 128
-        max_units = 9999
+        max_units = 512
 
         inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
-        # Add embedding if the input length is too large
-        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
-                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
         # Make more units for smaller channels and cut too large channels
         xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
         total_units = sum(xlens)
 
         # Original compile3
-        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
+        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
         mlstm1 = Concatenate()(lstms1)
         # compile3.v2 -- not good?
         # embedded = Concatenate()(embedded)
@@ -104,35 +101,35 @@ class DBPediaNet(SequenceNet):
         self._model = Model(inputs=inputs, outputs=[output])
         self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
-    def get_model3(self, input_lens, dr, rdr, reversed_inputs=False):
-        num_lstms = 2
+    def get_model3(self, input_lens, dr=0., rdr=0., reversed_inputs=False, lstm_layers=2):
         embed_size = 50
-        wv_len = self._encoder.wordvec_length
+        # echannels = set(self._encoder.embedding_channels)
+        echannels = list(range(len(input_lens) - 2))
 
         # todo: embedding for word vectors and preloading of spacy word vectors
-        inputs = [Input(shape=(None, ), dtype='int32') if ilen != wv_len else
-                  Input(shape=(None, wv_len)) for ilen in input_lens]
+        inputs = [Input(shape=(None, ), dtype='int32') if i in echannels else
+                  Input(shape=(None, ilen)) for i, ilen in enumerate(input_lens)]
 
-        _inputs = inputs
-        if reversed_inputs:
-            _inputs = list(reversed(inputs))
-            input_lens = list(reversed(input_lens))
+        embedded = [Embedding(ilen, embed_size)(inp) if i in echannels else inp for i, (ilen, inp) in enumerate(zip(input_lens, inputs))]
+        embedded = [Dropout(rate=dr)(emb) if i in echannels else emb for i, emb in enumerate(embedded)]  # dropout embeddings
+        xlens = [embed_size if i in echannels else ilen for i, ilen in enumerate(input_lens)]
 
-        embedded = [Embedding(ilen, embed_size)(inp) if ilen != wv_len else inp for ilen, inp in zip(input_lens, _inputs)]
-        embedded = [Dropout(rate=dr)(emb) for emb in embedded]  # dropout embeddings
-        xlens = [embed_size if ilen != wv_len else wv_len for ilen in input_lens]
-
-        # todo: bidirectional; on/off dropout
         nexts = embedded
-        for i in range(num_lstms):
-            nexts = [LSTM(xlen, return_sequences=True)(l) for xlen, l in zip(xlens, nexts)]
+        if reversed_inputs:
+            nexts = list(reversed(nexts))
+            xlens = list(reversed(xlens))
+
+        for i in range(lstm_layers):
+            # nexts = [LSTM(xlen, return_sequences=True)(l) for xlen, l in zip(xlens, nexts)]
+            nexts = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(l) for xlen, l in zip(xlens, nexts)]
+            # nexts = [Bidirectional(LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr))(l) for xlen, l in zip(xlens, nexts)]
 
         pooled = [GlobalMaxPooling1D()(l) for l in nexts]
         return inputs, pooled
 
-    # todo: add L2 reg
-    def compile4(self, dr=0.5, rdr=0.5):
+    def compile4b(self, dr=0.5, rdr=0.5, l2=0.):
         last_dense = 100
+        rl2 = regularizers.l2(l2)
 
         input_lens = self._encoder.vector_length
         c = len(input_lens) // 2  # splitting evenly, as branches are identical in their features
@@ -143,15 +140,29 @@ class DBPediaNet(SequenceNet):
         rinputs, rights = self.get_model3(right_lens, dr, rdr, reversed_inputs=True)
 
         channels = [Concatenate()([l, r]) for l, r in zip(lefts, rights)]  # concat left & right subpath in each channel
-        # channels = [Dense(last_dense, activation='sigmoid')(ch) for ch in channels]  # final channel representation
+        # channels = [Dense(last_dense, activation='sigmoid', kernel_regularizer=rl2)(ch) for ch in channels]  # final channel representation
 
-        # last = Concatenate()(lefts + rights)
         last = Concatenate()(channels)  # all channels merged; final representation
-        last = Dense(last_dense, activation='sigmoid')(last)
+        last = Dense(last_dense, activation='sigmoid', kernel_regularizer=rl2)(last)
         last = Dropout(rate=dr)(last)
 
         inputs = linputs + rinputs
-        output = Dense(self.nbclasses, activation='softmax', name='output')(last)
+        output = Dense(self.nbclasses, activation='softmax', kernel_regularizer=rl2, name='output')(last)
+        self._model = Model(inputs=inputs, outputs=[output])
+        self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
+
+    def compile4(self, dr=0.5, rdr=0.5, l2=0.):
+        last_dense = 200
+        rl2 = regularizers.l2(l2)
+
+        input_lens = self._encoder.vector_length
+        inputs, channels = self.get_model3(input_lens, dr, rdr)
+
+        last = Concatenate()(channels)  # all channels merged; final representation
+        last = Dense(last_dense, activation='sigmoid', kernel_regularizer=rl2)(last)
+        last = Dropout(rate=dr)(last)
+
+        output = Dense(self.nbclasses, activation='softmax', kernel_regularizer=rl2, name='output')(last)
         self._model = Model(inputs=inputs, outputs=[output])
         self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
