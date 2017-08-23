@@ -68,11 +68,15 @@ def raw(uri):
     return uri.rsplit('/', 1)[-1]
 
 
+def raw_d(t):
+    return t.rsplit('(')[0].strip(' _')
+
+
 @except_safe(EndPointNotFound, HTTPError)
 def get_label(uri: URIRef):
     t = list(glo.objects(uri, RDFS.label))
     t = raw(uri) if len(t) == 0 else str(t[0])
-    return t.split('(')[0].strip(' _')  # remove disambiguations
+    return raw_d(t)  # remove disambiguations
 
 
 @except_safe(EndPointNotFound, HTTPError)
