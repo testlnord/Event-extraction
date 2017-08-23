@@ -1,5 +1,13 @@
+from collections import namedtuple
+
 from intervaltree import Interval
 from rdflib import URIRef
+
+
+# todo: test rename of fields in data.py
+# EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
+EntityMention = namedtuple('EntityMention', ['start_char', 'end_char', 'uri'])
+
 
 
 class RelRecord:
