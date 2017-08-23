@@ -14,9 +14,11 @@ from rdflib.namespace import RDF, RDFS
 from pygtrie import CharTrie
 from cytoolz import groupby, first, second
 from fuzzywuzzy import fuzz
+import networkx as nx
 
+from experiments.ontology.symbols import ENT_CLASSES
 from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
-    get_type, get_superclass
+    get_type, get_superclass, raw, raw_d, gdb
 
 
 class NERTypeResolver:
@@ -63,7 +65,7 @@ class NERLinker:
     """
     Disambiguates named entities and stores new unknown if they satisfy type restrictions.
     """
-    def __init__(self, ner_type_resolver=NERTypeResolver(),
+    def __init__(self, outer_graph=gdb, ner_type_resolver=NERTypeResolver(),
                  metric_threshold=0.8, strict_type_match=True):
         self.ntr = ner_type_resolver
 
@@ -71,6 +73,9 @@ class NERLinker:
         self._trie = CharTrie()
         self._metric_threshold = metric_threshold
         self._strict_type_match = strict_type_match
+        self._allowed_types = ENT_CLASSES
+
+        self.outer_graph = outer_graph
 
     def update(self, uri_sf_pairs):
         """
@@ -111,7 +116,6 @@ class NERLinker:
                             _upd += 1
                     log.info('NERLinker: ent #{}: added {:3d}, updated {:3d} sfgroups; "{}"'.format(i, _new, _upd, str(ent_uri)))
 
-
     def _is_acronym(self, text, len_threshold=5):
         return len(text) < len_threshold and text.isupper()
 
@@ -122,66 +126,164 @@ class NERLinker:
             if self._trie.has_subtrie(text[:end]):
                 return text[:end]
 
-    def get_uri(self, span):
-        """
-        Get URIRef of span or None if it is unknown entity.
-        :param span: spacy.token.Span
-        :return: URIRef or None
-        """
-        # if self._is_acronym(text): text = span.text  # not-acronyms should be searched by lower-case form
+    def get_path_graph1(self, uris):
+        graph = nx.DiGraph()
+        for s, o in permutations(uris, 2):
+            for s_uri, r_uri, o_uri in self.outer_graph.triples((s, None, o)):
+                graph.add_edge(s_uri, o_uri)
+                # graph.add_edge(s_uri, o_uri, {'relation': r_uri})  # add to graph
+        return graph
 
-        text = span.text.lower()
+    def get_path_graph(self, uris, depth=2):
+        ont_graph = self.outer_graph
+        edges = list()
+        new_nodes = list(uris)
+        for i in range(depth):
+            for uri in new_nodes:
+                objs = list(ont_graph.objects(subject=uri, predicate=None))
+                subjs = list(ont_graph.subjects(object=uri, predicate=None))
+                edges.extend((uri, obj) for obj in objs)
+                edges.extend((subj, uri) for subj in subjs)
+                new_nodes = objs + subjs
+
+        graph = nx.DiGraph()
+        graph.add_edges_from(edges)
+        # todo: is it needed? maybe return the full graph for HITS algo...
+        subgraph = nx.transitive_closure(graph).subgraph(nbunch=uris)
+
+        return subgraph
+
+    def link(self, ents):
+        # todo: return uris or entries?
+        answers = {ent: None for ent in ents}
+        # Get candidate sets for all ents
+        candidates = {cand.uri: ent for ent in ents for cand in self.get_candidates(ent)}
+        # Build subgraph for these candidates
+        graph = self.get_path_graph(candidates, depth=3)
+        # Apply HITS or PageRank algorithm
+        hubs, authorities = nx.hits(graph, max_iter=20)
+        # Sort according to authority value
+        authorities = sorted(authorities.items(), key=second)
+
+        for uri, auth_value in authorities:
+            ent = candidates.get(uri)
+            if ent and not answers[ent]:
+                answers[ent] = uri
+        return answers
+
+    def __call__(self, doc):
+        """
+        Resolve uris of all entities, remember resolved uris;
+        correct entity types in doc for resolved entities;
+        ? remember new entities -- candidates for adding to ontology.
+        :param doc: spacy.Doc
+        :return: modified @doc
+        """
+
+        from spacy.tokens import Span
+        string_store = doc.vocab.strings
+
+        new_entities = []
+        for ent in doc.ents:
+
+            # Resolve all entities:
+            #   get types, (and flag whether type the same?), get confidence score
+            # !Is there any possibility to get type-guess or confidence to unknown entities?
+            #   somehow remember new entities as candidates, dump them somewhere
+            # Remember resolved somehow, link with Doc somehow
+            # Get resolved with different from spacy.ents types
+            # Merge them giving appropriate priority (use confidence, etc.)
+            # Set doc.ents
+
+            # todo: get types also
+            trie_entry = self.get_candidates(ent)
+            ent_type = trie_entry.ent_type
+
+            if trie_entry:
+                # todo: cache resolved?
+
+                # Change type annotations: priority to our type
+                label_id = string_store[ent_type]
+                new_entities.append(Span(doc=doc, start=ent.start, end=ent.end, label=ent_type))
+
+                # todo: we may check if spacy types and our guessed types are the same
+                #   but is it needed?
+                if not self._strict_type_match:
+                    guess_type = self.ntr.get_by_type_uri(ent_type)
+                    if guess_type and guess_type == ent.label_:
+                        pass
+            else:
+                # todo: remember unknown entity?
+
+                new_entities.append(ent)
+
+        doc.ents = tuple(new_entities)
+        return doc
+
+    def get_candidates(self, span):
+        """
+
+        :param span: spacy.token.Span
+        :return: List[TrieEntry]
+        """
         _trie = self._trie
+        text = span.text.lower()
+        candidates_filtered = []
+        if span.label_ in self._allowed_types:
+            # Determine how it's better to search
+            if span.label_ == 'PERSON':
+                # If ner type is Person: try all permutations of tokens
+                tokens = filter(bool, text.split(' '))
+                lprefixes = [self._longest_prefix(' '.join(p)) for p in permutations(tokens)]
+                lprefixes = filter(bool, lprefixes)
+                lprefix = max(lprefixes, key=len, default=None)
+            else:
+                lprefix = self._longest_prefix(text)
 
-        if span.label_ == 'PERSON':
-            # If ner type is Person: try all permutations of tokens
-            tokens = filter(bool, text.split(' '))
-            lprefixes = [self._longest_prefix(' '.join(p)) for p in permutations(tokens)]
-            lprefixes = filter(bool, lprefixes)
-            lprefix = max(lprefixes, key=len, default=None)
-        else:
-            lprefix = self._longest_prefix(text)
+            if lprefix is not None:
+                # log.info('span: "{}"; found prefix: "{}"'.format(span, lprefix))
+                candidate_sets = _trie.itervalues(prefix=lprefix)
+                candidates = list(chain.from_iterable(candidate_sets))
 
-        if lprefix is not None:
-            # log.info('span: "{}"; found prefix: "{}"'.format(span, lprefix))
-            candidate_sets = _trie.itervalues(prefix=lprefix)
-            candidates = list(chain.from_iterable(candidate_sets))
-            if len(candidates) > 0:
-                return self._fuzzy_search(span, candidates)
+                # todo: merge both typed and non-typed somehow, i.e. give some precedence, weight?
+                typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
+                search_in = [True]
+                if not self._strict_type_match:
+                    search_in.append(False)
 
-    def _fuzzy_search(self, span, candidates, metric=fuzz.ratio):
+                # Search with the same type first
+                for is_same_type in search_in:
+                    typed_candidates = typed.get(is_same_type)
+                    if typed_candidates:
+                        candidates_filtered.extend(self._fuzzy_filter(span.text, typed_candidates))
+        return candidates_filtered  # in the case of not-found just the empty list
+
+    def _fuzzy_filter(self, text, candidates, metric=fuzz.ratio):
         """
-        :param span: spacy.token.Span
+        :param text: str
         :param candidates: List[TrieEntry]
-        :param metric:
-        :return: best-matching URIRef or None
+        :param metric: (str, str) -> Numeric
+        :return: List[TrieEntry]
         """
-        # todo: avoid certain types (cardinal, DATE, etc.)
-        typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
-        search_in = [True]
-        if not self._strict_type_match:
-            search_in.append(False)  # todo: maybe allow only exact matches in that case?
+        # similar = groupby(lambda entry: metric(entry.sf, text), candidates)  # group by val of metric
+        # Calculate a metric
+        measured = [(metric(entry.sf, text), entry) for entry in candidates]
+        # Group by the same uri
+        similar = groupby(lambda entry: entry[1].uri, measured)  # uri: (m, entry)
+        # In each group of same matches leave only the one with the highest match-metric
+        similar = [max(sames, key=first) for sames in similar.values()]
+        # Sort by the metric
+        best_matches = sorted(similar, key=first, reverse=True)
+        # Filter bad matches
+        best_matches = [entry for m, entry in best_matches if m >= self._metric_threshold * 100]
 
-        # Search with the same type first
-        for is_same_type in search_in:
-            typed_candidates = typed.get(is_same_type)
-            if typed_candidates:
-                similar = groupby(lambda entry: metric(entry.sf, span.text), typed_candidates)  # group by val of metric
-                best_m = sorted([m for m in similar if m >= self._metric_threshold * 100], reverse=True)
+        # todo: do something with that, e.g. weight matches by that second metric and sort?
+        # Some more checks on the best matches if there're several matches
+        # if len(best_matches) > 1:
+        #     best_match = max(best_matches, key=lambda entry: metric(raw_d(raw(entry.uri)), span.text))
+        #     return [best_match]
+        return best_matches
 
-                # todo: some more checks on the best matches if there's not the only one?
-                # best_match_groups = [[ent.uri for ent in similar[m]] for m in best_m]
-                # if best_match_groups:
-                #     best_matches = best_match_groups[0]
-
-                best_matches = [ent.uri for m in best_m for ent in similar[m]]
-                # Get all synonyms in trie for these particular found candidates; calc weighted similarity to all of these synonyms
-                if len(best_matches) > 1:
-                    pass
-                elif len(best_matches) == 1:
-                    return best_matches[0]
-
-    # todo:
     def add_ent(self, new_ent):
         pass
 
@@ -297,7 +399,7 @@ def test_linker_trie(linker):
 
 
 def test_linker(linker):
-    from experiments.ontology.sub_ont import get_article, dbr, raw
+    from experiments.ontology.sub_ont import get_article, dbr
 
     # from experiments.ontology.data import nlp
     model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
@@ -320,7 +422,7 @@ def test_linker(linker):
                 print(sent_text)
                 prev_sent = sent_text
 
-            uris = linker.get_uri(ent)
+            uris = linker.get_candidates(ent)
             uris_str = uris and '; '.join(map(raw, uris)) or uris
             print('({}:{}) ({}) <{}> is [{}]'.format(ent.start, ent.end, ent.label_, ent.text, uris_str))
             # print('({}:{}) ({}) <{}> is <{}>'.format(ent.start, ent.end, ent.label_, ent.text, str(uri)))
@@ -328,7 +430,14 @@ def test_linker(linker):
 
 if __name__ == "__main__":
     from experiments.ontology.data_structs import ContextRecord, EntityRecord  # for unpickle()
+    # from experiments.ontology.config import config
+    from experiments.ontology.symbols import ENT_CLASSES
+
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
+
+    # print(list(sorted(set(NERTypeResolver.final_classes_names.values()))))
+    # print(list(sorted(set(ENT_CLASSES))))
+    # exit()
 
     base_dir = '/home/user/'
     project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
