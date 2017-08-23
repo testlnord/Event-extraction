@@ -1,6 +1,7 @@
 import logging as log
 from itertools import chain
 
+from cytoolz.itertoolz import groupby
 from intervaltree import IntervalTree, Interval
 from nltk.corpus import wordnet as wn
 
@@ -17,6 +18,29 @@ def merge_ents_offsets(primal_ents, other_ents):
     ents_filtered = [ent for ent in other_ents if not ents_tree.overlaps(ent.start_char, ent.end_char)]
     ents_filtered.extend(primal_ents)
     return ents_filtered
+
+
+def sentences_ents(doc, ents=None):
+    """
+    Group doc.ents by sentences.
+    :param doc: spacy.Doc
+    :param ents: iterable of objects with attributes 'start_char' and 'end_char' (if None (default), use doc.ents)
+    :yield: Tuple[spacy.token.Span, List[spacy.token.Span]]
+    """
+    # Group entities by sentences
+    sents_bound_tree = IntervalTree.from_tuples([(s.start_char, s.end_char, i) for i, s in enumerate(doc.sents)])
+    # Help function for convenience
+    def index(ent):
+        # print(list(sorted([tuple(i) for i in sents_bound_tree.all_intervals], key=lambda t: t[0])))
+        # print(ent)
+        sents = sents_bound_tree[ent.start_char: ent.end_char]
+        if sents: return sents.pop().data
+
+    if ents is None: ents = doc.ents
+    ents_in_sents = groupby(index, ents)
+    for i, sent in enumerate(doc.sents):
+        sent_ents = ents_in_sents.get(i, list())
+        yield sent, sent_ents
 
 
 def is_connected(span):

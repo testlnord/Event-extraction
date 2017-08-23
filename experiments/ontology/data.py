@@ -3,27 +3,21 @@ import os
 import pickle
 import random
 import re
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from copy import copy
 from itertools import permutations, islice
 from multiprocessing import Pool
 
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
-from cytoolz import groupby
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 
 from experiments.data_utils import unpickle
-from experiments.nlp_utils import merge_ents_offsets
-from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord
+from experiments.nlp_utils import merge_ents_offsets, sentences_ents
+from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord, EntityMention
 from experiments.ontology.linker import NERTypeResolver
 from experiments.ontology.sub_ont import dbo, dbr, gf, gdb
 from experiments.ontology.sub_ont import get_article, get_label
-
-# todo: test rename of fields
-# EntityMention = namedtuple('EntityMention', ['start', 'end', 'uri'])
-
-EntityMention = namedtuple('EntityMention', ['start_char', 'end_char', 'uri'])
 
 
 def filter_context(crecord):
@@ -95,7 +89,6 @@ def resolve_entities(article_links, graph=gdb):
                 yield EntityMention(start_char, end_char, uri)
 
 
-# todo:
 def resolve_relations(art_id, doc, ents_all, graph=gdb):
     """
 
@@ -105,18 +98,7 @@ def resolve_relations(art_id, doc, ents_all, graph=gdb):
     :param graph: RDFLib.Graph to resolve relations
     :yield: RelationRecord
     """
-    # Group entities by sentences
-    sents_bound_tree = IntervalTree.from_tuples([(s.start_char, s.end_char, i) for i, s in enumerate(doc.sents)])
-    def index(ent):
-        # Help function for convenience
-        # print(list(sorted([tuple(i) for i in sents_bound_tree.all_intervals], key=lambda t: t[0])))
-        # print(ent)
-        sents = sents_bound_tree[ent.start_char:ent.end_char]
-        if sents: return sents.pop().data
-
-    ents_in_sents = groupby(index, ents_all)
-    for i, sent in enumerate(doc.sents):
-        sent_ents = ents_in_sents.get(i, list())
+    for sent, sent_ents in sentences_ents(doc, ents=ents_all):
         # Resolve relations: look at all possible pairs and try to resolve them
         # NB: multiple entries of the same entities could produce almost identical RelationRecords,
         #   i.e. same contexts and triples, only spans are different (but it is expected behaviour)
