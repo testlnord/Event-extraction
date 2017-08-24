@@ -15,7 +15,7 @@ def eye_test(net, crecords, prob_threshold=0.5):
     trues = []
     preds = []
     for tops, crecord in zip(net.predict_crecords(crecords, topn=3), crecords):
-        _ = list(net._encoder.encode(crecord))  # to get the sdp
+        _ = net._encoder.encode(crecord)  # to get the sdp
         sdp = net._encoder.last_sdp
         true_rel_with_dir = net._encoder.encode_raw_class(crecord)
         _struct = (crecord, sdp, tops, true_rel_with_dir)
@@ -115,24 +115,27 @@ def main():
     epochs = 6
 
     # Load our data
-    # sclasses = RC_CLASSES_MAP_ALL
-    # inverse = RC_INVERSE_MAP
-    # model_name = 'noner.dr.noaug.v6.3.c4.all.inv'
+    sclasses = RC_CLASSES_MAP_ALL
+    inverse = RC_INVERSE_MAP
+    model_name = 'nocls.v6.3.c4.spacy.inv'
+    # encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse)
+    encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse)
+    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse_relations=inverse)
     # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-    # train_data, val_data = get_dbp_data(sclasses, batch_size)
+    train_data, val_data = get_dbp_data(sclasses, batch_size)
 
     # Load benchmark data (kbp37)
-    sclasses = KBP37_CLASSES_MAP
-    model_name = 'noner.dr.noaug.kbp.v5.3.c3'
-    encoder = DBPediaEncoder(nlp, sclasses)
+    # sclasses = KBP37_CLASSES_MAP
+    # model_name = 'noner.dr.noaug.kbp.v5.3.c3'
+    # encoder = DBPediaEncoder(nlp, sclasses)
     # encoder = DBPediaEncoderEmbed(nlp, sclasses)
-    train_data, val_data = get_kbp37_data(sclasses)
+    # train_data, val_data = get_kbp37_data(sclasses)
 
     # Load benchmark data (semeval)
     # sclasses = SEMEVAL_CLASSES_MAP
     # model_name = 'noner.dr.noaug.semeval.v5.3.1.c3'
     # encoder = DBPediaEncoder(nlp, sclasses)
-    # model_name = 'noner.dr.noaug.semeval.v6.3.1.c4'
+    # model_name = 'noner.dr.noaug.semeval.v6.3.c4b'
     # encoder = DBPediaEncoderBranched(nlp, sclasses)
     # encoder = DBPediaEncoderEmbed(nlp, sclasses)
     # train_data, val_data = get_semeval_data(sclasses)
@@ -146,20 +149,21 @@ def main():
 
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile3()
-    # net.compile4(l2=1e-5)
-    # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 7)
+    # net.compile3()
+    net.compile4(l2=1e-5)
+    # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 5)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
     log.info('classes: {}; model: {}; epochs: {}'.format(encoder.nbclasses, model_name, epochs))
     net._model.summary(line_length=80)
 
-    net.train(train_data, epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
+    hist = net.train(train_data, epochs, train_steps, val_data, val_steps, model_prefix=model_name)  # if the net cycles data by itself
 
     test_data = val_data
     prob_threshold = 0.5
     hits, misses = eye_test(net, test_data, prob_threshold=prob_threshold)
     print('rights: {}/{} with prob_threshold={}'.format(len(hits), len(test_data), prob_threshold))
+    print(hist)
     # evals = net.evaluate(val_data, val_steps)  # NB: remember about cycle()
     # print('evaluated: {}'.format(evals))
 

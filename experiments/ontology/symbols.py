@@ -149,15 +149,18 @@ ENT_MAPPING = {
     "Settlement": "GPE",
     "Country": "GPE",
     "Language": "LANGUAGE",
-    "ProgrammingLanguage": None,
     "Work": "PRODUCT",
-    "Software": None,
-    "VideoGame": None,
+    # "ProgrammingLanguage": None,
+    "ProgrammingLanguage": "LANGUAGE",
+    # "Software": None,
+    "Software": "PRODUCT",
+    # "VideoGame": None,
+    "VideoGame": "WORK_OF_ART",
 }
 
 
 NEW_ENT_CLASSES = {db_ent for db_ent, spacy_ent in ENT_MAPPING.items() if spacy_ent is None}
-ENT_CLASSES = NEW_ENT_CLASSES.union(set(filter(None, ENT_MAPPING.values())))
+ENT_CLASSES = NEW_ENT_CLASSES.union(set(filter(None, ENT_MAPPING.values())))  # classes we interested in
 
 LESS_ENT_CLASSES = NER_TAGS_LESS.union(NEW_ENT_CLASSES)
 ALL_ENT_CLASSES = NER_TAGS.union(NEW_ENT_CLASSES)
