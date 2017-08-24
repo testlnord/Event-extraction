@@ -16,7 +16,7 @@ def crecord2spans_old(crecord, nlp):
 
 def crecord2spans(cr, nlp, ntr):
     """
-    Get token offsets using char offsets and merge entity annotations here with spacy's using ner_type_resolver
+    Get token offsets using char offsets and merge entity annotations in Doc with spacy's using ner_type_resolver (ntr)
     :param cr: RelationRecord
     :param nlp: spacy model
     :param ntr: NERTypeResolver
@@ -24,13 +24,15 @@ def crecord2spans(cr, nlp, ntr):
     """
     doc = nlp(cr.context)
     spans = chars2spans(doc, cr.s_spanr, cr.o_spanr)
-    uris = [cr.subject_uri, cr.object_uri]
+    uris = [cr.subject, cr.object]
 
     _v_ = nlp.vocab.strings
     true_ents = []
     for span, uri in zip(spans, uris):
-        label_str = ntr.get_by_uri(uri, default_type='')
-        label_id = _v_[label_str] if label_str in _v_ else 0  # not modifying StringStore
+        label_str = ntr.get_by_uri(uri, default_type=span.label_)  # fallback to spacy's ner tag
+        if not label_str in _v_:
+            log.info('crecord2spans: unknown entity type: "{}"'.format(label_str))
+        label_id = _v_[label_str]  # modify StringStore if necessary
         true_ents.append(Span(doc=doc, start=span.start, end=span.end, label=label_id))
     corrected_ents = merge_ents_offsets(true_ents, doc.ents)
     doc.ents = corrected_ents
@@ -69,7 +71,7 @@ class DBPediaEncoder:
         self.tags = CategoricalTags(raw_classes, default_tag=(None, None))
 
         self.iob_tags = CategoricalTags(sorted(IOB_TAGS))
-        self.ner_tags = CategoricalTags(sorted(NER_TAGS), default_tag='')  # default_tag for non-named entities
+        self.ner_tags = CategoricalTags(sorted(ALL_ENT_CLASSES), default_tag='')  # default_tag for non-named entities
         self.pos_tags = CategoricalTags(sorted(POS_TAGS))
         self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self.wn_tags = CategoricalTags(sorted(WORDNET_HYPERNYM_CLASSES), default_tag='')
@@ -87,7 +89,6 @@ class DBPediaEncoder:
     def vector_length(self):
         wv = self.wordvec_length
         ners = len(self.ner_tags)
-        # return [len(self.iob_tags), ners, len(self.pos_tags), len(self.dep_tags), wv, ners]
         return [len(self.iob_tags), ners, len(self.pos_tags), len(self.dep_tags), len(self.wn_tags), wv, ners]
 
     @property
@@ -100,7 +101,7 @@ class DBPediaEncoder:
 
     def __call__(self, crecords):
         for crecord in crecords:
-            yield from self.encode(crecord)
+            yield self.encode(crecord)
 
     def encode_data(self, s_span, o_span):
         """
@@ -138,7 +139,6 @@ class DBPediaEncoder:
         s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
         o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
 
-        # data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _vectors, s_type_out + o_type_out
         data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
         return tuple(map(np.array, data))
 
@@ -164,12 +164,11 @@ class DBPediaEncoder:
         return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode() todo: remove
 
     def encode(self, crecord):
-        s_span, o_span = crecord2spans_old(crecord, self.nlp)
-        # s_span, o_span = crecord2spans(crecord, self.nlp, self.ntr)
+        # s_span, o_span = crecord2spans_old(crecord, self.nlp)
+        s_span, o_span = crecord2spans(crecord, self.nlp, self.ntr)  # todo: test for RelRecord
         data = self.encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
-        if data and cls:
-            yield (*data, *cls)
+        return (*data, *cls)
 
 
 class DBPediaEncoderWithEntTypes(DBPediaEncoder):
@@ -262,10 +261,11 @@ class DBPediaEncoderBranched(DBPediaEncoderEmbed):
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
         i = self.last_sdp_root
-        if 0 <= i < len(self.last_sdp):
-            left_parts = [d[:i+1] for d in data]
-            right_parts = [d[i:] for d in data]
-            return left_parts + right_parts
+        if not (0 <= i < len(self.last_sdp)):
+            i = 0
+        left_parts = [d[:i+1] for d in data]
+        right_parts = [d[i:] for d in data]
+        return left_parts + right_parts
 
 
 if __name__ == "__main__":

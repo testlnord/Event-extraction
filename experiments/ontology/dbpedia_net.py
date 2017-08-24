@@ -168,23 +168,24 @@ class DBPediaNet(SequenceNet):
 
     def _make_data_gen(self, data_gen):
         # data_gen = self.padder(xy for data in data_gen for xy in self._encoder.encode(data))
-        data_gen = self._encoder(data_gen)
         c = self._encoder.channels  # so, arr[:c] is the inputs and the arr[c:] is the output(s)
-        # for arr in cycle(self.batcher.batch_transposed(data_gen)):
-        #     data, cls = arr[:c], arr[c:]
-        #     yield data, cls
+        data_gen = self._encoder(data_gen)
         res = ((arr[:c], arr[c:]) for arr in self.batcher.batch_transposed(data_gen))  # decouple inputs and outputs (classes)
         return cycle(res)
 
     def predict(self, subject_object_spans_pairs, topn=1):
         encoded = [self._encoder.encode_data(*so_pair) for so_pair in subject_object_spans_pairs]
-        return self._predict_encoded(encoded, topn)
+        predictions = self._predict_encoded(encoded, topn)
+        assert len(predictions) == len(encoded) == len(subject_object_spans_pairs)  # need to keep consistency: predictions must be aligned with data
+        return predictions
 
     # temporary method for testing
     def predict_crecords(self, crecords, topn=1):
         c = self._encoder.channels
-        encoded = [arr[:c] for cr in crecords for arr in self._encoder.encode(cr)]  # throwing out the true class
-        return self._predict_encoded(encoded, topn)
+        encoded = [self._encoder.encode(cr)[:c] for cr in crecords]
+        predictions = self._predict_encoded(encoded, topn)
+        assert len(predictions) == len(encoded) == len(crecords)  # need to keep consistency: predictions must be aligned with data
+        return predictions
 
     def _predict_encoded(self, encoded, topn):
         preds = []
