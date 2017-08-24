@@ -274,7 +274,7 @@ KBP37_CLASSES_MAPPED = {
     # "per:origin",
     # "per:spouse",
     # "per:title",
-    "per:employee of": "",  # todo: inverse to keyActor
+    # "per:employee of": "",  # todo: inverse to keyActor
     # "per:countries of residence",
     # "per:stateorprovinces of residence",
     # "per:cities of residence",
@@ -287,7 +287,7 @@ KBP37_CLASSES_MAPPED = {
     "org:country of headquarters": "location",
     "org:stateorprovince of headquarters": "location",
     "org:city of headquarters": "location",
-    "org:members": "",
+    # "org:members": "",
     # "no relation": None,
 }
 

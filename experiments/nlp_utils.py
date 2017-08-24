@@ -9,6 +9,7 @@ from nltk.corpus import wordnet as wn
 def merge_ents_offsets(primal_ents, other_ents):
     """
     Merge ent lists with non-overlapping entries, giving precedence to primal_ents.
+    NB: all ents must have attributes 'start_char' and 'end_char'
     :param primal_ents: iterable of tuples of form (begin_offset, end_offset, data)
     :param other_ents: iterable of tuples of form (begin_offset, end_offset, data)
     :return: merged list of ents

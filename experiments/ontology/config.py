@@ -9,12 +9,12 @@ config = {
     "dir": "experiments/models",
 
     "nlp": {
-      "name": "en_core_web_sm",
+      # "name": "en_core_web_sm",
+      "name": "en_core_web_md",
       "path": None,
       # "path": "models.v5.4.i5.epoch2",
     },
 
-    "nerlinker": "nerlinker.pck",
     # // "dbpedianet": "dbpedianet_model_noner.dr.noaug.v5.1.c3.all.inv_full_epoch04",
   },
 
