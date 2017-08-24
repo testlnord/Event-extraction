@@ -78,10 +78,11 @@ class SequenceNet:
                                          )
         if save_history:
             hist_path = self.relpath(
-                'logs', 'history_{}_{}_epochsize{}_epochs{}.json'.format(type(self).__name__.lower(), model_prefix, epochsize, epochs))
+                'logs', 'history_{}_{}_epochs{}.json'.format(type(self).__name__.lower(), model_prefix, epochs))
             with open(hist_path, 'w') as f:
                 import json
                 json.dump(hist.history, f)
+        return hist.history
 
     def evaluate(self, data_gen, steps, max_q_size=2):
         log.info('{}: Evaluating...'.format(type(self).__name__))
