@@ -118,6 +118,48 @@ def get_superclass(uri):
     return None
 
 
+@except_safe(EndPointNotFound, HTTPError)
+def objects(graph, subject):
+    res = graph.query(
+        'select distinct ?o where {' +
+        ' <{}> ?r ?o .'.format(subject) +
+        ' ?r rdf:type rdf:Property .' +
+        ' filter (!isLiteral(?o)) . }'
+    )
+    for row in res:
+        yield row[0]
+
+
+@except_safe(EndPointNotFound, HTTPError)
+def subjects(graph, object):
+    res = graph.query(
+        'select distinct ?s where {' +
+        ' ?s ?r <{}> .'.format(object) +
+        ' ?r rdf:type rdf:Property . }'
+    )
+    for row in res:
+        yield row[0]
+
+
+# todo: test
+@except_safe(EndPointNotFound, HTTPError)
+def triples(graph, subject=None, predicate=None, object=None, literals_allowed=False):
+    s = '<{}>'.format(subject) if subject else '?s'
+    r = '<{}>'.format(predicate) if predicate else '?r'
+    o = '<{}>'.format(object) if object else '?o'
+    head = ' '.join([s, r, o])
+
+    q = 'select distinct ' + head + ' where { ' + head + ' . '
+    if not predicate:
+        q += '{} rdf:type rdf:Property . '.format(r)
+    if not object and not literals_allowed:
+        q += ' filter (!isLiteral({})) . '.format(o)
+    q += ' }'
+
+    # return q
+    yield from graph.query(q)
+
+
 def query_raw(q):
     sparql = SPARQLWrapper(endpoint, update_endpoint)
     sparql.setHTTPAuth(DIGEST)
