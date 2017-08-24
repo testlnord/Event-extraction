@@ -139,12 +139,12 @@ def main():
     tr_data, ts_data = split(dataset, (0.8, 0.2))
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 2
-    epoch_size = 10
+    epochs = 10
+    epoch_size = 5
     start_epoch = 1  # for proper model saving when continuing training
-    lr = base_lr = 0.1
-    lr_decay = False
-    decay_step = 1  # decay every `decay_step` epochs
+    lrs = [0.01, 0.003, 0.001, 0.0003, 0.0001]
+    lrs.extend(lrs[-1:] * epochs)  # repeat last learn rate
+    save_every = 2
 
     nlp2 = nlp  # loading plain spacy model
     # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)
@@ -155,12 +155,13 @@ def main():
 
     stat_history = []
     for epoch in range(start_epoch, epochs + start_epoch):
-        if lr_decay:
-            lr = base_lr * 10 ** -(epoch // decay_step)  # learning rate decay
+        lr = lrs[epoch]
         train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0., learn_rate=lr, tags_complete=True, train_new=False)
         model_dir = 'models.v6.1.i{}.epoch{}'.format(epoch_size, epoch)
-        save_model(nlp2, model_dir, vectors_symlink=True)
-        print('train_ner: epoch: {}/{}; lr: {}; saved "{}"'.format(epoch, epochs, lr, model_dir))
+        if epoch % save_every == 0:
+            save_model(nlp2, model_dir, vectors_symlink=False)
+            print('saved "{}"'.format(model_dir))
+        print('train_ner: "{}": epoch: {}/{}; lr: {}'.format(model_dir, epoch, epochs, lr))
 
         # print("##### TRAIN DATA #####")
         # tr_trues, tr_preds = get_preds(nlp2, tr_data)
