@@ -58,7 +58,7 @@ def print_tested(crecord, sdp, tops, true_rel_with_dir):
         print('{:2d} {:.2f} {}'.format(icls, prob, rel_with_dir))
 
 
-def get_dbp_data(sclasses, batch_size):
+def get_dbp_data(sclasses, neg_ratio, batch_size=1):
     from experiments.ontology.data import load_rc_data
     from experiments.ontology.tagger import load_golden_data
 
@@ -71,7 +71,7 @@ def get_dbp_data(sclasses, batch_size):
     # golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:4000]  # for testing
     # exclude = golden
     exclude = set()
-    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=0.2, shuffle=True, exclude_records=exclude)
+    dataset = load_rc_data(sclasses, rc_file=rc_out, rc_neg_file=rc0_out, neg_ratio=neg_ratio, shuffle=True, exclude_records=exclude)
     # train_data, val_data = dataset, golden  # using golden set as testing set
     train, val = split(dataset, splits=(0.8, 0.2), batch_size=batch_size)  # usual data load
 
@@ -100,6 +100,34 @@ def get_kbp37_data(sclasses):
     return tuple(load_benchmark_data(sclasses, data_dir))
 
 
+def map_relations(records, mapping):
+    mapping[None] = None  # preserving negative class
+    new_records = []
+    for record in records:
+        if record.relation in mapping:
+            record.relation = mapping[record.relation]
+            new_records.append(record)
+    return new_records
+
+
+def get_all_data(sclasses, neg_ratio):
+    from experiments.ontology.symbols import KBP37_CLASSES_MAPPED, SEMEVAL_CLASSES_MAPPED
+
+    train0, val0 = get_dbp_data(sclasses, neg_ratio, 1)
+
+    kbp_subset = KBP37_CLASSES_MAPPED
+    train1, val1 = get_kbp37_data(kbp_subset)
+    train1 = map_relations(train1, kbp_subset)
+    val1 = map_relations(val1, kbp_subset)
+
+    train = [train0 + train1]
+    val = [val0 + val1]
+    random.shuffle(train)
+    random.shuffle(val)
+
+    return train, val
+
+
 def main():
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
     from experiments.ontology.symbols import KBP37_CLASSES_MAP, SEMEVAL_CLASSES_MAP
@@ -117,12 +145,13 @@ def main():
     # Load our data
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
-    model_name = 'nocls.v6.3.c4.spacy.inv'
-    # encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse)
-    encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse)
+    model_name = 'nocls.v5.4.c3.spacy.inv'
+    encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse,
+                             expand_context=3, min_entities_dist=2)
+    # encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse)
     # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse_relations=inverse)
     # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-    train_data, val_data = get_dbp_data(sclasses, batch_size)
+    train_data, val_data = get_dbp_data(sclasses, neg_ratio=0.5, batch_size=batch_size)
 
     # Load benchmark data (kbp37)
     # sclasses = KBP37_CLASSES_MAP
@@ -149,8 +178,8 @@ def main():
 
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    # net.compile3()
-    net.compile4(l2=1e-5)
+    net.compile3()
+    # net.compile4(l2=1e-5)
     # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 5)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 
