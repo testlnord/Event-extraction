@@ -8,10 +8,10 @@ class except_safe:
         self.tries = tries
 
     def __call__(self, f):
-        def safe_f(*args):
+        def safe_f(*args, **kwargs):
             for i in range(1, self.tries+1):
                 try:
-                    return f(*args)
+                    return f(*args, **kwargs)
                 except self.exceptions as e:
                     if i == self.tries:
                         raise e

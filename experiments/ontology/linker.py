@@ -17,8 +17,9 @@ from fuzzywuzzy import fuzz
 import networkx as nx
 
 from experiments.ontology.symbols import ENT_CLASSES
-from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
-    get_type, get_superclass, raw, raw_d, gdb
+from experiments.ontology.sub_ont import *
+# from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
+    # get_type, get_superclass, raw, raw_d, gdb
 
 
 class NERTypeResolver:
@@ -65,7 +66,7 @@ class NERLinker:
     """
     Disambiguates named entities and stores new unknown if they satisfy type restrictions.
     """
-    def __init__(self, outer_graph=gdb, ner_type_resolver=NERTypeResolver(),
+    def __init__(self, outer_graph=gall, ner_type_resolver=NERTypeResolver(),
                  metric_threshold=0.8, strict_type_match=True):
         self.ntr = ner_type_resolver
 
@@ -76,6 +77,7 @@ class NERLinker:
         self._allowed_types = ENT_CLASSES
 
         self.outer_graph = outer_graph
+        self.cache = dict()
 
     def update(self, uri_sf_pairs):
         """
@@ -116,50 +118,54 @@ class NERLinker:
                             _upd += 1
                     log.info('NERLinker: ent #{}: added {:3d}, updated {:3d} sfgroups; "{}"'.format(i, _new, _upd, str(ent_uri)))
 
-    def _is_acronym(self, text, len_threshold=5):
-        return len(text) < len_threshold and text.isupper()
-
-    def _longest_prefix(self, text):
-        l = len(text)
-        left = max(1, floor(l * self._metric_threshold))
-        for end in range(l, left-1, -1):
-            if self._trie.has_subtrie(text[:end]):
-                return text[:end]
-
-    def get_path_graph1(self, uris):
+    def get_path_graph1(self, uris, depth=1):
         graph = nx.DiGraph()
+        graph.add_nodes_from(uris)
         for s, o in permutations(uris, 2):
-            for s_uri, r_uri, o_uri in self.outer_graph.triples((s, None, o)):
-                graph.add_edge(s_uri, o_uri)
+            try:
+                next(self.outer_graph.triples((s, None, o)))
+                graph.add_edge(s, o)
                 # graph.add_edge(s_uri, o_uri, {'relation': r_uri})  # add to graph
+            except StopIteration:
+                continue
         return graph
 
     def get_path_graph(self, uris, depth=2):
         ont_graph = self.outer_graph
         edges = list()
         new_nodes = list(uris)
+        log.info('linker: started building subgraph on {} nodes with depth {}'.format(len(new_nodes), depth))
         for i in range(depth):
-            for uri in new_nodes:
-                objs = list(ont_graph.objects(subject=uri, predicate=None))
-                subjs = list(ont_graph.subjects(object=uri, predicate=None))
+            for uri in new_nodes:  # todo: make parallel queries
+                # objs = list(ont_graph.objects(subject=uri, predicate=None))
+                # subjs = list(ont_graph.subjects(object=uri, predicate=None))
+                objs = list(objects(ont_graph, subject=uri))
+                subjs = list(subjects(ont_graph, object=uri))
                 edges.extend((uri, obj) for obj in objs)
                 edges.extend((subj, uri) for subj in subjs)
                 new_nodes = objs + subjs
 
+        log.info('linker: ended building subgraph: {} edges'.format(len(edges)))
         graph = nx.DiGraph()
+        graph.add_nodes_from(uris)
         graph.add_edges_from(edges)
         # todo: is it needed? maybe return the full graph for HITS algo...
         subgraph = nx.transitive_closure(graph).subgraph(nbunch=uris)
+        log.info('linker: ended extracting subgraph: {} edges'.format(len(subgraph.edges())))
 
         return subgraph
 
     def link(self, ents):
-        # todo: return uris or entries?
-        answers = {ent: None for ent in ents}
+        """
+
+        :param ents:
+        :return: Dict[spacy.token.Span, rdflib.URIRef]
+        """
+        answers = {ent: None for ent in ents if ent.label_ in self._allowed_types}
         # Get candidate sets for all ents
         candidates = {cand.uri: ent for ent in ents for cand in self.get_candidates(ent)}
         # Build subgraph for these candidates
-        graph = self.get_path_graph(candidates, depth=3)
+        graph = self.get_path_graph1(candidates, depth=2)
         # Apply HITS or PageRank algorithm
         hubs, authorities = nx.hits(graph, max_iter=20)
         # Sort according to authority value
@@ -172,57 +178,27 @@ class NERLinker:
         return answers
 
     def __call__(self, doc):
-        """
-        Resolve uris of all entities, remember resolved uris;
-        correct entity types in doc for resolved entities;
-        ? remember new entities -- candidates for adding to ontology.
-        :param doc: spacy.Doc
-        :return: modified @doc
-        """
+        answer_lists = {ent: self.get_candidates(ent) for ent in doc.ents}
+        # todo: if needed, differentiate here between resolved and unknown entities
+        self.cache.update({ent: [str(entry.uri) for entry in answers] for ent, answers in answer_lists.items()})
 
-        from spacy.tokens import Span
-        string_store = doc.vocab.strings
+        # Resolve all entities:
+        #   get types, (and flag whether type the same?), get confidence score
+        # !Is there any possibility to get type-guess or confidence to unknown entities?
+        #   somehow remember new entities as candidates, dump them somewhere
+        # Remember resolved somehow, link with Doc somehow
+        # Get resolved with different from spacy.ents types
+        # Merge them giving appropriate priority (use confidence, etc.)
+        # Set doc.ents
 
-        new_entities = []
-        for ent in doc.ents:
-
-            # Resolve all entities:
-            #   get types, (and flag whether type the same?), get confidence score
-            # !Is there any possibility to get type-guess or confidence to unknown entities?
-            #   somehow remember new entities as candidates, dump them somewhere
-            # Remember resolved somehow, link with Doc somehow
-            # Get resolved with different from spacy.ents types
-            # Merge them giving appropriate priority (use confidence, etc.)
-            # Set doc.ents
-
-            # todo: get types also
-            trie_entry = self.get_candidates(ent)
-            ent_type = trie_entry.ent_type
-
-            if trie_entry:
-                # todo: cache resolved?
-
-                # Change type annotations: priority to our type
-                label_id = string_store[ent_type]
-                new_entities.append(Span(doc=doc, start=ent.start, end=ent.end, label=ent_type))
-
-                # todo: we may check if spacy types and our guessed types are the same
-                #   but is it needed?
-                if not self._strict_type_match:
-                    guess_type = self.ntr.get_by_type_uri(ent_type)
-                    if guess_type and guess_type == ent.label_:
-                        pass
-            else:
-                # todo: remember unknown entity?
-
-                new_entities.append(ent)
-
-        doc.ents = tuple(new_entities)
         return doc
 
+    def get(self, span, default=None):
+        return self.cache.get(span, default=default)
+
+    # todo: return some kind of weight or probability with matches
     def get_candidates(self, span):
         """
-
         :param span: spacy.token.Span
         :return: List[TrieEntry]
         """
@@ -245,7 +221,6 @@ class NERLinker:
                 candidate_sets = _trie.itervalues(prefix=lprefix)
                 candidates = list(chain.from_iterable(candidate_sets))
 
-                # todo: merge both typed and non-typed somehow, i.e. give some precedence, weight?
                 typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
                 search_in = [True]
                 if not self._strict_type_match:
@@ -277,15 +252,22 @@ class NERLinker:
         # Filter bad matches
         best_matches = [entry for m, entry in best_matches if m >= self._metric_threshold * 100]
 
-        # todo: do something with that, e.g. weight matches by that second metric and sort?
         # Some more checks on the best matches if there're several matches
-        # if len(best_matches) > 1:
-        #     best_match = max(best_matches, key=lambda entry: metric(raw_d(raw(entry.uri)), span.text))
-        #     return [best_match]
+        if len(best_matches) > 1:
+            # best_matches = [max(best_matches, key=lambda entry: metric(raw_d(raw(entry.uri)), text))]
+            best_matches = groupby(lambda entry: metric(raw_d(raw(entry.uri)), text), best_matches)
+            best_matches = best_matches[max(best_matches)]
         return best_matches
 
-    def add_ent(self, new_ent):
-        pass
+    def _is_acronym(self, text, len_threshold=5):
+        return len(text) < len_threshold and text.isupper()
+
+    def _longest_prefix(self, text):
+        l = len(text)
+        left = max(1, floor(l * self._metric_threshold))
+        for end in range(l, left-1, -1):
+            if self._trie.has_subtrie(text[:end]):
+                return text[:end]
 
     def save(self, model_dir):
         model_name = type(self).__name__.lower() + '.pck'
@@ -399,8 +381,6 @@ def test_linker_trie(linker):
 
 
 def test_linker(linker):
-    from experiments.ontology.sub_ont import get_article, dbr
-
     # from experiments.ontology.data import nlp
     model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
     # model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
@@ -413,25 +393,42 @@ def test_linker(linker):
         print('\n')
         print(i, str(title))
         article = get_article(title)
-        text = nlp(article['text'])
-        prev_sent = ''
-        for ent in text.ents:
-            sent_text = ent.sent.text.strip()
-            if sent_text != prev_sent:
-                print()
-                print(sent_text)
-                prev_sent = sent_text
+        doc = nlp(article['text'])
+        test_get_candidates(linker, doc)
 
-            uris = linker.get_candidates(ent)
-            uris_str = uris and '; '.join(map(raw, uris)) or uris
-            print('({}:{}) ({}) <{}> is [{}]'.format(ent.start, ent.end, ent.label_, ent.text, uris_str))
-            # print('({}:{}) ({}) <{}> is <{}>'.format(ent.start, ent.end, ent.label_, ent.text, str(uri)))
+
+def test_link(linker, doc):
+        answers = linker.link(doc.ents)
+        for j, (sent, sent_ents) in enumerate(sentences_ents(doc)):
+            print()
+            print(j, sent)
+            for ent in sent_ents:
+                uri = answers[ent]
+                uri_str = raw(str(uri))
+                print('{}: <{}>'.format(ent.text.rjust(20), uri_str))
+
+
+def test_get_candidates(linker, doc):
+    prev_sent = ''
+    for ent in doc.ents:
+        sent_text = ent.sent.text.strip()
+        if sent_text != prev_sent:
+            print()
+            print(sent_text)
+            prev_sent = sent_text
+
+        entries = linker.get_candidates(ent)
+        uris_str = '; '.join([raw(entry.uri) for entry in entries if entry])
+        print('({}:{}) ({}) <{}> is [{}]'.format(ent.start, ent.end, ent.label_, ent.text, uris_str))
+        # print('({}:{}) ({}) <{}> is <{}>'.format(ent.start, ent.end, ent.label_, ent.text, str(uri)))
 
 
 if __name__ == "__main__":
     from experiments.ontology.data_structs import ContextRecord, EntityRecord  # for unpickle()
     # from experiments.ontology.config import config
     from experiments.ontology.symbols import ENT_CLASSES
+    # from experiments.ontology.sub_ont import get_article, dbr
+    from experiments.nlp_utils import sentences_ents
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
