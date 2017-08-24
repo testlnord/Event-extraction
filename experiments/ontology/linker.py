@@ -16,7 +16,7 @@ from cytoolz import groupby, first, second
 from fuzzywuzzy import fuzz
 import networkx as nx
 
-from experiments.ontology.symbols import ENT_CLASSES
+from experiments.ontology.symbols import ENT_CLASSES, ENT_MAPPING
 from experiments.ontology.sub_ont import *
 # from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
     # get_type, get_superclass, raw, raw_d, gdb
@@ -194,7 +194,7 @@ class NERLinker:
         return doc
 
     def get(self, span, default=None):
-        return self.cache.get(span, default=default)
+        return self.cache.get(span, None) or default  # cache can return some evaluated to false value
 
     # todo: return some kind of weight or probability with matches
     def get_candidates(self, span):
@@ -221,7 +221,11 @@ class NERLinker:
                 candidate_sets = _trie.itervalues(prefix=lprefix)
                 candidates = list(chain.from_iterable(candidate_sets))
 
-                typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
+                # todo: it is temporary for keeping consistency with saved in trie old type schema
+                tmap = ENT_MAPPING
+                typed = groupby(lambda e: (tmap.get(e.ent_type) or e.ent_type) == span.label_, candidates)
+                # typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
+
                 search_in = [True]
                 if not self._strict_type_match:
                     search_in.append(False)
@@ -381,12 +385,13 @@ def test_linker_trie(linker):
 
 
 def test_linker(linker):
-    # from experiments.ontology.data import nlp
-    model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
+    # model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
     # model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
-    model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
-    model_path = os.path.join(model_dir, model_name)
-    nlp = spacy.load('en', path=model_path)
+    # model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
+    # model_path = os.path.join(model_dir, model_name)
+    # nlp = spacy.load('en', path=model_path)
+    nlp = spacy.load(**config['models']['nlp'])
+    # todo: remember about consistency between ENT_CLASSES, that nlp classes and Trie stored classes
 
     titles = [dbr.JetBrains, dbr.Microsoft_Windows]
     for i, title in enumerate(titles):
@@ -394,18 +399,19 @@ def test_linker(linker):
         print(i, str(title))
         article = get_article(title)
         doc = nlp(article['text'])
+
         test_get_candidates(linker, doc)
 
 
 def test_link(linker, doc):
-        answers = linker.link(doc.ents)
-        for j, (sent, sent_ents) in enumerate(sentences_ents(doc)):
-            print()
-            print(j, sent)
-            for ent in sent_ents:
-                uri = answers[ent]
-                uri_str = raw(str(uri))
-                print('{}: <{}>'.format(ent.text.rjust(20), uri_str))
+    answers = linker.link(doc.ents)
+    for j, (sent, sent_ents) in enumerate(sentences_ents(doc)):
+        print()
+        print(j, sent)
+        for ent in sent_ents:
+            uri = answers[ent]
+            uri_str = raw(str(uri))
+            print('{}: <{}>'.format(ent.text.rjust(20), uri_str))
 
 
 def test_get_candidates(linker, doc):
