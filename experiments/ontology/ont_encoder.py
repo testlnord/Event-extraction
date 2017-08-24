@@ -41,15 +41,18 @@ def crecord2spans(cr, nlp, ntr):
 
 class DBPediaEncoder:
     def __init__(self, nlp, superclass_map, inverse_relations=None,
-                 expand_context=0, expand_noun_chunks=False):
+                 min_entities_dist=0, expand_context=0,
+                 expand_noun_chunks=False, ner_type_resolver=NERTypeResolver()):
         """
         Encodes the data into the suitable for the Keras format. Uses Shortest Dependency Tree (SDP) assumption.
         :param nlp:
         :param superclass_map: mapping of base relation types (uris) into final relation types used for classification
         :param inverse_relations: mapping between relations and their inverse (symmetric) relations
-        :param expand_context: expand context around key tokens in SDP
+        :param min_entities_dist: minimum distance between entities, otherwise add context (#expand_context tokens) around them to SDP
+        :param expand_context: expand context around key tokens in SDP by that number of tokens
         :param expand_noun_chunks: whether to expand parts of noun chunks in SDP into full noun chunks
         """
+        self.ntr = ner_type_resolver
         self.nlp = nlp
         self.classes = superclass_map
         self._inverse_map = dict()
@@ -75,11 +78,12 @@ class DBPediaEncoder:
         self.pos_tags = CategoricalTags(sorted(POS_TAGS))
         self.dep_tags = CategoricalTags(sorted(DEP_TAGS), default_tag='')  # in case of unknown dep tags (i.e. some punctuation marks can have no dependency tag)
         self.wn_tags = CategoricalTags(sorted(WORDNET_HYPERNYM_CLASSES), default_tag='')
+
+        self._min_entities_dist = min_entities_dist
         self._expand_context = expand_context
         self._expand_noun_chunks = expand_noun_chunks
 
         self.last_sdp = self.last_sdp_root = None
-        self.ntr = NERTypeResolver()  # todo: temp. move to constructor. for crecord2spans
 
     @property
     def channels(self):
@@ -110,9 +114,8 @@ class DBPediaEncoder:
         :param o_span: object span
         :return: encoded data (tuple of arrays)
         """
-        sdp, self.last_sdp_root = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
-        sdp = expand_ents(sdp, self._expand_noun_chunks)
-        self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
+        sdp = self._encode_sdp(s_span, o_span)
+
         _iob_tags = []
         _ner_tags = []
         _pos_tags = []
@@ -141,6 +144,19 @@ class DBPediaEncoder:
 
         data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
         return tuple(map(np.array, data))
+
+    def _encode_sdp(self, s_span, o_span):
+        # if entities are too close to each other, then add context around them to sdp
+        ctx = 0
+        if min(abs(o_span.start - s_span.end), abs(s_span.start - o_span.end)) < self._min_entities_dist:
+            ctx = self._expand_context
+
+        sdp, iroot = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=ctx)
+        sdp = expand_ents(sdp, self._expand_noun_chunks)
+        self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
+        self.last_sdp_root = iroot
+
+        return sdp
 
     def _encode_ent_position(self, ent_span, ent_indicator, zero_indicator):
         ent_indices = {token.i for token in ent_span}
@@ -215,9 +231,7 @@ class DBPediaEncoderEmbed(DBPediaEncoder):
         :param o_span: object span
         :return: encoded data (tuple of arrays)
         """
-        sdp, self.last_sdp_root = shortest_dep_path(s_span, o_span, include_spans=True, nb_context_tokens=self._expand_context)
-        sdp = expand_ents(sdp, self._expand_noun_chunks)
-        self.last_sdp = sdp  # for the case of any need to look at that (as example, for testing)
+        sdp = self._encode_sdp(s_span, o_span)
 
         _iob_tags = []
         _ner_tags = []
@@ -260,6 +274,7 @@ class DBPediaEncoderBranched(DBPediaEncoderEmbed):
 
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
+
         i = self.last_sdp_root
         if not (0 <= i < len(self.last_sdp)):
             i = 0
