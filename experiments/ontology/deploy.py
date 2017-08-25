@@ -52,7 +52,7 @@ def main1():
     models_dir = os.path.join(config['base_dir'], _models_['dir'])
 
     # model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
-    # model_name = 'models.v6.1.i{}.epoch{}'.format(10, 4)
+    # model_name = 'models.v6.1.i{}.epoch{}'.format(5, 10)
     # nlp = spacy.load('en', path=os.path.join(model_dir, model_name))
     nlp = spacy.load(**_models_['nlp'])
 
@@ -60,11 +60,14 @@ def main1():
     linker = NERLinker(ner_type_resolver=ntr)
     linker.load(models_dir)
     nlp.pipeline.append(linker)
-
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
-    encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse, ner_type_resolver=ntr)
-    model_name = 'nocls.v6.3.c4.spacy.inv'
+
+    # encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse, ner_type_resolver=ntr)
+    # model_name = 'nocls.v6.3.c4.spacy.inv'
+    encoder = DBPediaEncoder(nlp, sclasses, inverse, expand_context=3, min_entities_dist=2)
+    model_name = 'nocls.v5.4.c3.spacy.inv'
+
     model_name = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 4)
     model_path = os.path.join(models_dir, model_name)
     net = DBPediaNet.from_model_file(encoder, batch_size=1, model_path=model_path)
