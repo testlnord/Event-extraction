@@ -8,6 +8,7 @@ from copy import copy
 from itertools import permutations, islice
 from multiprocessing import Pool
 
+from rdflib.term import Literal
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
@@ -16,8 +17,8 @@ from experiments.data_utils import unpickle
 from experiments.nlp_utils import merge_ents_offsets, sentences_ents
 from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord, EntityMention
 from experiments.ontology.linker import NERTypeResolver
-from experiments.ontology.sub_ont import dbo, dbr, gf, gdb
-from experiments.ontology.sub_ont import get_article, get_label
+from experiments.ontology.sub_ont import dbo, dbr, gf, gfall, gdb, gdbo
+from experiments.ontology.sub_ont import get_article, get_label, get_subjects, get_objects
 
 
 def filter_context(crecord):
@@ -38,10 +39,6 @@ def filter_context(crecord):
         cr = copy(crecord)
         cr.cut_context(p.begin, p.end)
         return cr
-
-
-def filter_contexts(crecords):
-    return list(filter(None, map(filter_context, crecords)))
 
 
 def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=True, exclude_records=frozenset()):
@@ -165,21 +162,23 @@ def run_extraction(nlp, inner_graph, outer_graph, subject_uris, use_all_articles
         subj_article = get_article(subject)
         if subj_article is not None:
             # Search linked objects only in the provided, likely domain-specific 'world' (inner_graph)
-            objects = set(inner_graph.objects(subject=subject))
+            objects = set(obj for obj in inner_graph.objects(subject=subject) if not isinstance(obj, Literal))
+            # objects = set(get_objects(inner_graph, subject=subject))
             articles = map(get_article, objects) if use_all_articles else [subj_article]
             articles = [a for a in articles if a is not None and a['id'] not in visited]
             log.info('articles: {}; objects: {}'.format(len(articles), tuple(map(str, objects))))
-
             objects.add(subject)
+
             texts = [article['text'] for article in articles]
             docs = nlp.pipe(texts, n_threads=n_threads, batch_size=batch_size)
             for article, doc in zip(articles, docs):
                 # Resolving entities from the whole 'world' (outer_graph)
                 ents_article = list(resolve_entities(article['links'], graph=outer_graph))
-                candidates = set(ent.uri for ent in ents_article).union(objects)
-                ents_found = next(get_contexts([doc], *candidates))
+                # candidates = set(ent.uri for ent in ents_article).union(objects)
+                # ents_found = next(get_contexts([doc], *candidates))
+                # ents_all = merge_ents_offsets(ents_article, ents_found)
+                ents_all = ents_article
 
-                ents_all = merge_ents_offsets(ents_article, ents_found)
                 if len(ents_all) > 0:
                     yield article['id'], doc, ents_all
                 visited.add(article['id'])
@@ -193,26 +192,32 @@ def make_dataset(nlp, ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, 
     frc0 = open(rc_no_outfile, 'wb')
 
     counter = defaultdict(int)
+    total_rels = 0
+    total_rels_filtered = 0
+    total_ents = 0
     try:
-        subject_uris = set(inner_graph.subjects())
-        total_rels = 0
-        total_rels_filtered = 0
-        total_ents = 0
+        from rdflib.term import URIRef
+        from experiments.ontology.symbols import RC_CLASSES_MAP_ALL
+        allowed_classes = RC_CLASSES_MAP_ALL  # get all relevant relation uris
+        subject_uris = {subj for rcls in allowed_classes for subj in outer_graph.subjects(predicate=URIRef(rcls))}
+
+        # subject_uris = set(inner_graph.subjects())
+
         # NB: using outer_graph for the search of objects for subject_uris!
-        # graph = outer_graph
-        graph = inner_graph
+        graph = outer_graph
+        # graph = inner_graph
+
         for art_id, doc, ents in run_extraction(nlp, graph, outer_graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
             ers = [EntityRecord(cr, *ent) for ent in ents]
             cr.ents = ers
             pickle.dump(cr, fner)
 
-            nb_filtered = 0
+            nb_filtered = j = 0
             for j, rrel in enumerate(resolve_relations(art_id, doc, ents, graph=outer_graph), 1):
                 counter[rrel.relation] += 1
                 if not rrel.relation:
                     pickle.dump(rrel, frc0)
-                # todo: make generic filtering function?
                 elif rrel.relation.startswith(dbo):
                     nb_filtered += 1
                     pickle.dump(rrel, frc)
@@ -221,7 +226,7 @@ def make_dataset(nlp, ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, 
             total_rels += j
             total_rels_filtered += nb_filtered
             total_ents += len(ents)
-            log.info('article_id: {}; #ents: {} (total: {}); rels: {} (filtered: {}; total_filtered: {}; total: {})'
+            log.info('article_id: {}; ents: {} (total: {}); rels: {} (filtered: {}; total_filtered: {}; total: {})'
                      .format(art_id, len(ents), total_ents, j, nb_filtered, total_rels_filtered, total_rels))
     finally:
         print(dict(counter))
@@ -272,6 +277,9 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NE
                 if nb_our_ents >= min_ents and ents_ratio >= min_ents_ratio:
                     # Add entities recognised by spacy if they don't overlap any of our entities
                     sent_ents = merge_ents_offsets(sent_ents, spacy_ents)
+                    # Change global Doc offsets to sentence offsets
+                    sstart = sent.start_char
+                    sent_ents = [(s - sstart, e - sstart, ent_type) for s, e, ent_type in sent_ents]
                     yield sent, list(map(tuple, sent_ents))
 
                     yielded += 1
@@ -318,20 +326,20 @@ def repickle_rrecords(path):
 
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-    from experiments.ontology.config import config
-    import spacy
-    nlp = spacy.load(**config['models']['nlp'])
+    from experiments.ontology.config import config, load_nlp
+    nlp = load_nlp()
 
     # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
     # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
 
-    data_dir = config['data']['dir']
-    ner_out = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
-    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
-    rc2_out = os.path.join(data_dir, 'rc', 'rrecords.v2.other.pck')
-    # make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+    ner_dir = config['data']['ner_dir']
+    rc_dir = config['data']['rc_dir']
+    ner_out = os.path.join(ner_dir, 'crecords.v3.pck')
+    rc_out = os.path.join(rc_dir, 'rrecords.v3.filtered.pck')
+    rc0_out = os.path.join(rc_dir, 'rrecords.v3.negative.pck')
+    rc2_out = os.path.join(rc_dir, 'rrecords.v3.other.pck')
+    make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
 
     # rc_paths = [rc_out, rc0_out, rc2_out]
     # for rc_path in rc_paths:
