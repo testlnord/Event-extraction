@@ -64,10 +64,10 @@ def get_dbp_data(sclasses, neg_ratio, batch_size=1):
 
     data_dir = '/home/user/datasets/dbpedia/'
     golden_dir = '/home/user/datasets/dbpedia/rc/golden500/'
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
-    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v3.filtered.pck_')
+    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v3.negative.pck_')
 
-    # Load golden-set (test-data), cutting it; load train-set, excluding golden-set from there
+    # Load golden-set (test-data), cut it; load train-set, exclude golden-set from there
     # golden = load_golden_data(sclasses, golden_dir, shuffle=True)[:4000]  # for testing
     # exclude = golden
     exclude = set()
@@ -129,28 +129,28 @@ def get_all_data(sclasses, neg_ratio):
 
 
 def main():
+    import spacy
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
     from experiments.ontology.symbols import KBP37_CLASSES_MAP, SEMEVAL_CLASSES_MAP
+    from experiments.ontology.config import config, load_nlp
 
-    import spacy
-    from experiments.ontology.config import config
-    nlp = spacy.load(**config['models']['nlp'])
-    # model_dir = 'models.v5.4.i5.epoch2'
-    # nlp = spacy.load('en', path=model_dir)  # todo: where're the word vectors???
+    nlp_model_name = 'models.cls.v7.1.i{}.epoch{}'.format(5, 4)
+    nlp = load_nlp(nlp_model_name)
+    # nlp = load_nlp()
 
     random.seed(2)
     batch_size = 1
-    epochs = 6
+    epochs = 4
 
     # Load our data
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
-    model_name = 'nocls.v5.4.c3.spacy.inv'
-    encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse,
-                             expand_context=3, min_entities_dist=2)
-    # encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse)
-    # encoder = DBPediaEncoderBranched(nlp, sclasses, inverse_relations=inverse)
-    # encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
+    # model_name = 'nocls.v5.4.c3.spacy.inv'
+    model_name = 'cls.v7.1.c4.our_nlp.inv'
+    # encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse,
+    #                          expand_context=3, min_entities_dist=2)
+    encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse_relations=inverse,
+                                  expand_context=3, min_entities_dist=2)
     train_data, val_data = get_dbp_data(sclasses, neg_ratio=0.5, batch_size=batch_size)
 
     # Load benchmark data (kbp37)
@@ -178,8 +178,8 @@ def main():
 
     # Instantiating new net or loading existing
     net = DBPediaNet(encoder, timesteps=None, batch_size=batch_size)
-    net.compile3()
-    # net.compile4(l2=1e-5)
+    # net.compile3()
+    net.compile4(l2=1e-5)
     # model_path = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 5)
     # net = DBPediaNet.from_model_file(encoder, batch_size, model_path=DBPediaNet.relpath('models', model_path))
 

@@ -150,12 +150,12 @@ ENT_MAPPING = {
     "Country": "GPE",
     "Language": "LANGUAGE",
     "Work": "PRODUCT",
-    # "ProgrammingLanguage": None,
-    "ProgrammingLanguage": "LANGUAGE",
-    # "Software": None,
-    "Software": "PRODUCT",
-    # "VideoGame": None,
-    "VideoGame": "WORK_OF_ART",
+    "ProgrammingLanguage": None,
+    # "ProgrammingLanguage": "LANGUAGE",
+    "Software": None,
+    # "Software": "PRODUCT",
+    "VideoGame": None,
+    # "VideoGame": "WORK_OF_ART",
 }
 
 
@@ -202,6 +202,7 @@ RC_CLASSES_MAP_ALL.update(RC_CLASSES_MAP_MORE)
 
 RC_CLASSES = set(RC_CLASSES_MAP.values())
 RC_CLASSES_ALL = set(RC_CLASSES_MAP_ALL.values())
+
 
 # keyActor and parentEntity are similar sometimes
 RC_INVERSE_MAP = {
