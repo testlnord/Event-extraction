@@ -7,7 +7,7 @@ from intervaltree import IntervalTree
 import spacy
 
 from experiments.nlp_utils import sentences_ents
-from experiments.ontology.config import config
+from experiments.ontology.config import config, load_nlp
 from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP, ENT_CLASSES
 from experiments.ontology.linker import NERTypeResolver, NERLinker
 from experiments.ontology.ont_encoder import *
@@ -48,13 +48,11 @@ class RelationRanger:
 
 
 def main1():
-    _models_ = config['models']
-    models_dir = os.path.join(config['base_dir'], _models_['dir'])
+    models_dir = config['models']['dir']
 
-    # model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
-    # model_name = 'models.v6.1.i{}.epoch{}'.format(5, 10)
-    # nlp = spacy.load('en', path=os.path.join(model_dir, model_name))
-    nlp = spacy.load(**_models_['nlp'])
+    # nlp_model_name = 'models.v6.1.i{}.epoch{}'.format(5, 10)
+    # nlp = load_nlp(nlp_model_name)
+    nlp = load_nlp()
 
     ntr = NERTypeResolver()
     linker = NERLinker(ner_type_resolver=ntr)
@@ -77,13 +75,12 @@ def main1():
 
 
 def main2():
-    _models_ = config['models']
-    models_dir = os.path.join(config['base_dir'], _models_['dir'])
+    models_dir = config['models']['dir']
 
-    model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
-    # model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
-    model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
-    nlp = spacy.load('en', path=os.path.join(model_dir, model_name))
+    # nlp_model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
+    # nlp_model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
+    nlp_model_name = 'models.cls.v7.1.i{}.epoch{}'.format(5, 4)
+    nlp = load_nlp(nlp_model_name)
 
     ntr = NERTypeResolver()
     linker = NERLinker(ner_type_resolver=ntr)
@@ -95,7 +92,7 @@ def main2():
     encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse, ner_type_resolver=ntr)
     # model_name = 'noner.dr.noaug.v5.1.c3.all.inv'
     model_name = 'noner.dr.noaug.v6.3.c3.all.inv'
-    model_name = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 2)
+    model_name = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 4)
     model_path = os.path.join(models_dir, model_name)
     net = DBPediaNet.from_model_file(encoder, batch_size=1, model_path=model_path)
 
@@ -129,4 +126,4 @@ if __name__ == "__main__":
 
     from experiments.ontology.linker import TrieEntry  # for linker.load --- todo: make import unnecessary
 
-    main1()
+    main2()
