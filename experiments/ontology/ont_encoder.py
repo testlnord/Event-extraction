@@ -291,21 +291,21 @@ if __name__ == "__main__":
     from experiments.ontology.data_structs import RelationRecord, RelRecord
     from experiments.data_utils import unpickle
     from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
-    from experiments.ontology.config import config
+    from experiments.ontology.config import config, load_nlp
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    # nlp = spacy.load(**config['models']['nlp'])
+    # nlp = load_nlp()
     model_dir = 'models.v5.4.i5.epoch2'
-    nlp = spacy.load('en', path=model_dir)
+    nlp = load_nlp(model_dir)
 
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
     encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
 
-    data_dir = config['data']['dir']
-    rc_out = os.path.join(data_dir, 'rc', 'rrecords.v2.filtered.pck')
-    rc0_out = os.path.join(data_dir, 'rc', 'rrecords.v2.negative.pck')
+    rc_dir = config['data']['rc_dir']
+    rc_out = os.path.join(rc_dir, 'rrecords.v2.filtered.pck')
+    rc0_out = os.path.join(rc_dir, 'rrecords.v2.negative.pck')
     # dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
     # print('total with filtered classes:', len(dataset))
 

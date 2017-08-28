@@ -119,11 +119,11 @@ def get_superclass(uri):
 
 
 @except_safe(EndPointNotFound, HTTPError)
-def objects(graph, subject):
+def get_objects(graph, subject):
     res = graph.query(
         'select distinct ?o where {' +
         ' <{}> ?r ?o .'.format(subject) +
-        ' ?r rdf:type rdf:Property .' +
+        # ' ?r rdf:type rdf:Property .' +
         ' filter (!isLiteral(?o)) . }'
     )
     for row in res:
@@ -131,7 +131,7 @@ def objects(graph, subject):
 
 
 @except_safe(EndPointNotFound, HTTPError)
-def subjects(graph, object):
+def get_subjects(graph, object):
     res = graph.query(
         'select distinct ?s where {' +
         ' ?s ?r <{}> .'.format(object) +
@@ -143,7 +143,7 @@ def subjects(graph, object):
 
 # todo: test
 @except_safe(EndPointNotFound, HTTPError)
-def triples(graph, subject=None, predicate=None, object=None, literals_allowed=False):
+def get_triples(graph, subject=None, predicate=None, object=None, literals_allowed=False):
     s = '<{}>'.format(subject) if subject else '?s'
     r = '<{}>'.format(predicate) if predicate else '?r'
     o = '<{}>'.format(object) if object else '?o'
