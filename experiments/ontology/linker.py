@@ -3,13 +3,13 @@ import os
 from math import floor
 import pickle
 from collections import defaultdict, namedtuple
-from itertools import permutations, chain, zip_longest
+from itertools import permutations, chain, zip_longest, product
 
 from multiprocessing import Pool
 from concurrent.futures import ProcessPoolExecutor
 
 import spacy
-from rdflib import URIRef
+from rdflib import URIRef, Literal
 from rdflib.namespace import RDF, RDFS
 from pygtrie import CharTrie
 from cytoolz import groupby, first, second
@@ -76,6 +76,7 @@ class NERLinker:
         self._strict_type_match = strict_type_match
         self._allowed_types = ENT_CLASSES
 
+        self.predicate_namespace = dbo  # todo: parametrize
         self.outer_graph = outer_graph
         self.cache = dict()
 
@@ -118,44 +119,61 @@ class NERLinker:
                             _upd += 1
                     log.info('NERLinker: ent #{}: added {:3d}, updated {:3d} sfgroups; "{}"'.format(i, _new, _upd, str(ent_uri)))
 
-    def get_path_graph1(self, uris, depth=1):
-        graph = nx.DiGraph()
-        graph.add_nodes_from(uris)
-        for s, o in permutations(uris, 2):
-            try:
-                next(self.outer_graph.triples((s, None, o)))
-                graph.add_edge(s, o)
-                # graph.add_edge(s_uri, o_uri, {'relation': r_uri})  # add to graph
-            except StopIteration:
-                continue
-        return graph
+    def _resolve_edges(self, target_nodes, source_nodes):
+        ont_graph = self.outer_graph
+        ns = self.predicate_namespace
+        new_edges = set()
+        targets = set(target_nodes)
+
+        for s in source_nodes:
+            for rel, obj in ont_graph.predicate_objects(subject=s):
+                if obj in targets and rel.startswith(ns) and obj != s:
+                    new_edges.add((s, obj))
+        return new_edges
+
+    def _resolve_nodes(self, uri):
+        ont_graph = self.outer_graph
+        ns = self.predicate_namespace
+
+        # objs = list(ont_graph.objects(subject=uri, predicate=None))
+        objs = {obj for rel, obj in ont_graph.predicate_objects(subject=uri)
+                if rel.startswith(ns) and not isinstance(obj, Literal)}
+        subjs = {subj for subj, rel in ont_graph.subject_predicates(object=uri)
+                 if rel.startswith(ns)}
+
+        new_edges = {(uri, obj) for obj in objs}.union({(subj, uri) for subj in subjs})
+        new_nodes = objs.union(subjs)
+        return new_nodes, new_edges
 
     def get_path_graph(self, uris, depth=2):
-        ont_graph = self.outer_graph
-        edges = list()
-        new_nodes = list(uris)
-        log.info('linker: started building subgraph on {} nodes with depth {}'.format(len(new_nodes), depth))
-        for i in range(depth):
-            for uri in new_nodes:  # todo: make parallel queries
-                # objs = list(ont_graph.objects(subject=uri, predicate=None))
-                # subjs = list(ont_graph.subjects(object=uri, predicate=None))
-                objs = list(objects(ont_graph, subject=uri))
-                subjs = list(subjects(ont_graph, object=uri))
-                edges.extend((uri, obj) for obj in objs)
-                edges.extend((subj, uri) for subj in subjs)
-                new_nodes = objs + subjs
+        edges = set()
+        nodes = set(uris)
+        log.info('linker: started building subgraph on {} nodes with depth {}'.format(len(nodes), depth))
 
-        log.info('linker: ended building subgraph: {} edges'.format(len(edges)))
+        mmap = map  # todo: make parallel queries
+        for i in range(depth - 1):
+            new_nodes = set()
+            for uri_nodes, uri_edges in mmap(self._resolve_nodes, nodes):
+                new_nodes.update(uri_nodes)
+                edges.update(uri_edges)
+            nodes = new_nodes
+            log.info('linker: finished iter {}/{} with {} new nodes, {} edges'.format(i+1, depth, len(new_nodes), len(edges)))
+
+        # Last step can be done easier
+        edges.update(self._resolve_edges(uris, nodes))
+        log.info('linker: finished building subgraph: {} edges'.format(len(edges)))
+
         graph = nx.DiGraph()
-        graph.add_nodes_from(uris)
+        graph.add_nodes_from(uris)  # need only original entities
         graph.add_edges_from(edges)
+
         # todo: is it needed? maybe return the full graph for HITS algo...
         subgraph = nx.transitive_closure(graph).subgraph(nbunch=uris)
         log.info('linker: ended extracting subgraph: {} edges'.format(len(subgraph.edges())))
 
         return subgraph
 
-    def link(self, ents):
+    def link(self, ents, depth=2):
         """
 
         :param ents:
@@ -163,18 +181,27 @@ class NERLinker:
         """
         answers = {ent: None for ent in ents if ent.label_ in self._allowed_types}
         # Get candidate sets for all ents
-        candidates = {cand.uri: ent for ent in ents for cand in self.get_candidates(ent)}
+        all_candidates = [(cand.uri, ent) for ent in ents for cand in self.get_candidates(ent)]
+        # Each candidate can resolve multiple entities
+        candidates = defaultdict(list)
+        for cand_uri, ent in all_candidates:
+            candidates[cand_uri].append(ent)
+        # candidates = {cand.uri: ent for ent in ents for cand in self.get_candidates(ent)}
+
         # Build subgraph for these candidates
-        graph = self.get_path_graph1(candidates, depth=2)
+        graph = self.get_path_graph(candidates, depth=depth)
         # Apply HITS or PageRank algorithm
         hubs, authorities = nx.hits(graph, max_iter=20)
         # Sort according to authority value
-        authorities = sorted(authorities.items(), key=second)
+        authorities = sorted(authorities.items(), key=second, reverse=True)
 
+        # todo: what to do with equally probable authorities? or with 'zero' authorities?
+        #   -somehow preserve initial sort by get_candidates()? or returned weights (if any)
         for uri, auth_value in authorities:
-            ent = candidates.get(uri)
-            if ent and not answers[ent]:
-                answers[ent] = uri
+            ents = candidates.get(uri, list())
+            for ent in ents:
+                if not answers[ent]:
+                    answers[ent] = uri
         return answers
 
     def __call__(self, doc):
@@ -400,16 +427,17 @@ def test_linker(linker):
         article = get_article(title)
         doc = nlp(article['text'])
 
-        test_get_candidates(linker, doc)
+        # test_get_candidates(linker, doc)
+        test_link(linker, doc)
 
 
 def test_link(linker, doc):
-    answers = linker.link(doc.ents)
+    answers = linker.link(doc.ents, depth=2)
     for j, (sent, sent_ents) in enumerate(sentences_ents(doc)):
         print()
         print(j, sent)
         for ent in sent_ents:
-            uri = answers[ent]
+            uri = answers.get(ent, '-')
             uri_str = raw(str(uri))
             print('{}: <{}>'.format(ent.text.rjust(20), uri_str))
 
