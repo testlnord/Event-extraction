@@ -11,7 +11,7 @@ from experiments.dl_utils import print_confusion_matrix
 from experiments.ontology.symbols import NEW_ENT_CLASSES, ENT_CLASSES, ALL_ENT_CLASSES
 
 
-def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=True, train_new=False):
+def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_complete=True):
     """
     Train spacy entity recogniser (either the new on or update existing _nlp.entity)
     :param _nlp: spacy.lang.Language class, containing EntityRecogniser which is to be trained
@@ -20,21 +20,8 @@ def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_co
     :param learn_rate:
     :param dropout:
     :param tags_complete: if True, then assume that provided entity tags are complete
-    :param train_new: if True, train new EntityRecogniser (not update existing)
     :return:
     """
-    # todo: some troubles with train_new
-    if train_new: _nlp.entity = EntityRecognizer(_nlp.vocab, entity_types=ALL_ENT_CLASSES)
-
-    # Add unknown entity types
-    for ent_type in NEW_ENT_CLASSES:
-        _nlp.entity.add_label(ent_type)
-
-    # Add new words to vocab
-    for doc, _ in train_data:
-        for word in doc:
-            _ = _nlp.vocab[word.orth]
-
     _nlp.entity.model.learn_rate = learn_rate
     for itn in range(1, iterations+1):
         random.shuffle(train_data)
@@ -52,18 +39,15 @@ def train_ner(_nlp, train_data, iterations, learn_rate=1e-3, dropout=0., tags_co
                     if gold.ner[i] == 'O':
                         gold.ner[i] = '-'
 
-            if not train_new:
-                _nlp.tagger(doc)  # todo: why is that? is it needed for updating existing? is it needed for new model?
+            _nlp.tagger(doc)  # todo: why is that? is it needed for updating existing? is it needed for new model?
 
             loss += _nlp.entity.update(doc, gold, drop=dropout)
         log.info('train_ner: iter #{}/{}, loss: {}'.format(itn, iterations, loss))
         if loss == 0:
             break
-    # This step averages the model's weights. This may or may not be good for your situation --- it's empirical.
-    _nlp.end_training()
 
 
-def save_model(_nlp, model_dir, save_vectors=True, vectors_symlink=True):
+def save_model(_nlp, model_dir, save_vectors=True, vectors_symlink=False):
     """
     :param _nlp:
     :param model_dir:
@@ -117,8 +101,19 @@ def test_look(y_true, y_pred, labels=ENT_CLASSES, nil='O'):
     return stat
 
 
+def print_dataset(dataset):
+    from cytoolz import first
+    for i, (sent, ents) in enumerate(dataset, 1):
+        print()
+        print(i, sent)
+        for a, b, ent_type in sorted(ents, key=first):
+            print('[{}:{}] <{}> "{}"'.format(a, b, ent_type, sent.text[a:b]))
+        print(ents)
+
+
 def main():
     import os
+    from itertools import islice
     from experiments.data_utils import split, unpickle
     from experiments.ontology.data import transform_ner_dataset
     from experiments.ontology.config import config
@@ -129,9 +124,9 @@ def main():
     log.info('train_ner: starting loading...')
     nlp = spacy.load('en_core_web_md')
 
-    data_dir = config['data']['dir']
-    dataset_file = os.path.join(data_dir, 'ner', 'crecords.v2.pck')
-    # dataset = list(islice(unpickle(dataset_file), 400))
+    ner_dir = config['data']['ner_dir']
+    dataset_file = os.path.join(ner_dir, 'crecords.v2.pck')
+    # dataset = list(islice(unpickle(dataset_file), 100))
     dataset = list(unpickle(dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
                                          allowed_ent_types=ALL_ENT_CLASSES, min_ents=1))
@@ -139,29 +134,43 @@ def main():
     tr_data, ts_data = split(dataset, (0.8, 0.2))
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 10
+    epochs = 4
     epoch_size = 5
     start_epoch = 1  # for proper model saving when continuing training
-    lrs = [0.01, 0.003, 0.001, 0.0003, 0.0001]
+    lrs = [0.003, 0.001, 0.0003, 0.0001]
     lrs.extend(lrs[-1:] * epochs)  # repeat last learn rate
-    save_every = 2
+    save_every = 1
 
     nlp2 = nlp  # loading plain spacy model
-    # model_dir = 'models.v5.2.i{}.epoch{}'.format(epoch_size, start_epoch-1)
+    # model_dir = 'models.v5.4.i{}.epoch{}'.format(5, 2)
     # nlp2 = spacy.load('en', path=model_dir)  # continuing training
-    log.info('iter 0: base test: TEST DATA')
+    # log.info('iter 0: base test: TEST DATA {}'.format(model_dir))
     ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=False)
     test_look(ts_trues, ts_preds)
+
+    # nlp.entity = EntityRecognizer(_nlp.vocab, entity_types=ALL_ENT_CLASSES)  # train new one from scratch
+
+    # Add unknown entity types
+    for ent_type in NEW_ENT_CLASSES:
+        nlp2.entity.add_label(ent_type)
+
+    # Add new words to vocab
+    for doc, _ in tr_data:
+        for word in doc:
+            _ = nlp2.vocab[word.orth]
 
     stat_history = []
     for epoch in range(start_epoch, epochs + start_epoch):
         lr = lrs[epoch]
-        train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0., learn_rate=lr, tags_complete=True, train_new=False)
-        model_dir = 'models.v6.1.i{}.epoch{}'.format(epoch_size, epoch)
+        train_ner(nlp2, tr_data, iterations=epoch_size, dropout=0., learn_rate=lr, tags_complete=True)
+        # This step averages the model's weights. This may or may not be good for your situation --- it's empirical.
+        # nlp2.end_training()
+
+        this_model = 'models.cls.v7.3.i{}.epoch{}'.format(epoch_size, epoch)
         if epoch % save_every == 0:
-            save_model(nlp2, model_dir, vectors_symlink=False)
-            print('saved "{}"'.format(model_dir))
-        print('train_ner: "{}": epoch: {}/{}; lr: {}'.format(model_dir, epoch, epochs, lr))
+            save_model(nlp2, this_model, vectors_symlink=False)
+            print('saved "{}"'.format(this_model))
+        print('train_ner: "{}": finished epoch: {}/{}; lr: {}'.format(this_model, epoch, epochs, lr))
 
         # print("##### TRAIN DATA #####")
         # tr_trues, tr_preds = get_preds(nlp2, tr_data)
