@@ -151,12 +151,12 @@ class DBPediaNet(SequenceNet):
         self._model = Model(inputs=inputs, outputs=[output])
         self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
-    def compile4(self, dr=0.5, rdr=0.5, l2=0.):
+    def compile4(self, dr=0.5, rdr=0.5, l2=0., lstm_layers=2):
         last_dense = 200
         rl2 = regularizers.l2(l2)
 
         input_lens = self._encoder.vector_length
-        inputs, channels = self.get_model3(input_lens, dr, rdr)
+        inputs, channels = self.get_model3(input_lens, dr, rdr, lstm_layers=lstm_layers)
 
         last = Concatenate()(channels)  # all channels merged; final representation
         last = Dense(last_dense, activation='sigmoid', kernel_regularizer=rl2)(last)
