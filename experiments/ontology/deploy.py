@@ -8,9 +8,9 @@ import spacy
 
 from experiments.nlp_utils import sentences_ents
 from experiments.ontology.config import config, load_nlp
-from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP, ENT_CLASSES
+from experiments.ontology.symbols import RC_CLASSES_MAP_ALL, RC_CLASSES_MAP_ALL2, RC_CLASSES_MAP_ALL3, RC_INVERSE_MAP, ENT_CLASSES
 from experiments.ontology.linker import NERTypeResolver, NERLinker
-from experiments.ontology.ont_encoder import *
+from experiments.ontology.ont_encoder import DBPediaEncoderEmbed, DBPediaEncoder, DBPediaEncoderBranched
 from experiments.ontology.dbpedia_net import DBPediaNet
 # from experiments.ontology.
 
@@ -23,10 +23,12 @@ def get_relation_candidates(doc):
 
 # todo: output format
 class RelationRanger:
-    def __init__(self, model, topn=1, prob_threshold=0.3):
+    def __init__(self, model, topn=1, prob_threshold=0.3,
+                 min_ents_dist=0):
         self.model = model
         self.topn = topn
         self.prob_threshold = prob_threshold
+        self.min_ents_dist = min_ents_dist
 
         self._allowed_types = ENT_CLASSES  # todo: remove dependency?
 
@@ -34,7 +36,13 @@ class RelationRanger:
         # filter pairs only with needed ner types (ner-type-resolver?)
         #   there could be some already present in the ontology candidates...
         clss = self._allowed_types
-        rel_cands = [(s, o) for s, o in get_relation_candidates(doc) if s.label_ in clss and o.label_ in clss]
+        # rel_cands = [(s, o) for s, o in get_relation_candidates(doc) if s.label_ in clss and o.label_ in clss]
+        rel_cands = []
+        for s, o in get_relation_candidates(doc):
+            if s.label_ in clss and o.label_ in clss:
+                ents_dist = min(abs(o.start - s.end), abs(s.start - o.end))
+                if ents_dist >= self.min_ents_dist:
+                    rel_cands.append((s, o))
 
         if rel_cands:
             # The format is List[Tuple[subject_span, object_span]]
@@ -70,8 +78,10 @@ def main1():
     model_path = os.path.join(models_dir, model_name)
     net = DBPediaNet.from_model_file(encoder, batch_size=1, model_path=model_path)
 
-    rranger = RelationRanger(net, topn=3, prob_threshold=0.25)
-    test_articles(nlp, linker, rranger)
+    rranger = RelationRanger(net, topn=3, prob_threshold=0.25, min_ents_dist=2)
+    # titles = ['JetBrains', 'Microsoft_Windows']
+    titles = ['Blender_(software)', 'FreeMind']
+    test_articles(nlp, linker, rranger, titles)
 
 
 def main2():
@@ -89,32 +99,44 @@ def main2():
 
     sclasses = RC_CLASSES_MAP_ALL
     inverse = RC_INVERSE_MAP
-    encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse, ner_type_resolver=ntr)
+    # encoder = DBPediaEncoder(nlp, sclasses, inverse_relations=inverse, ner_type_resolver=ntr)
     # model_name = 'noner.dr.noaug.v5.1.c3.all.inv'
-    model_name = 'noner.dr.noaug.v6.3.c3.all.inv'
+    # model_name = 'noner.dr.noaug.v6.3.c3.all.inv'
+    encoder = DBPediaEncoderEmbed(nlp, sclasses, inverse, ner_type_resolver=ntr,
+                                  min_entities_dist=2, expand_context=3)
+    # model_name = 'cls.v7.1.c4.our_nlp.inv'
+    model_name = 'cls.v7.1.c4l3.spacy.inv'  # epoch: 4
+    # model_name = 'cls.v7.1.c4.l3.spacy.rc2.inv'  # epoch: 0
+    # model_name = 'cls.full_sents.v7.2.c4.l3.spacy.rc3.inv'  # epoch: 0|1
+    # model_name = 'cls.v7.2.c4.l3.spacy.rc3.inv'  # epoch: 0|1
     model_name = 'dbpedianet_model_{}_full_epoch{:02d}.h5'.format(model_name, 4)
+
     model_path = os.path.join(models_dir, model_name)
     net = DBPediaNet.from_model_file(encoder, batch_size=1, model_path=model_path)
 
-    rranger = RelationRanger(net, topn=3, prob_threshold=0.25)
-    test_articles(nlp, linker, rranger)
+    rranger = RelationRanger(net, topn=3, prob_threshold=0.25, min_ents_dist=2)
+    # titles = ['JetBrains', 'Microsoft_Windows']
+    titles = ['Blender_(software)', 'JetBrains']
+    test_articles(nlp, linker, rranger, titles)
 
 
-def test_articles(nlp, linker, rranger):
+def test_articles(nlp, linker, rranger, titles):
     from experiments.ontology.sub_ont import dbr, get_article
 
-    # titles = [dbr.JetBrains, dbr.Microsoft_Windows]
-    titles = [dbr['Blender_(software)'], dbr.FreeMind]
+    _enc = rranger.model._encoder  # for getting sdp
+
     for i, title in enumerate(titles):
         print('\n')
-        print(i, str(title))
-        text = get_article(title)['text']
+        print(i, title)
+        text = get_article(dbr[title])['text']
 
         # This is how texts should be processed:
         doc = nlp(text)  # NERLinker does its' job here
         for i, ((s, o), preds) in enumerate(rranger.get_relations(doc)):
+            sdp = _enc._encode_sdp(s, o)
             print()
             print(s.sent.text.strip())
+            print(sdp)
             print('{} <({}) {}: {}> ----- <({}) {}: {}>'
                   .format(i, s.label_, s, linker.get(s), o.label_, o, linker.get(o)))
             for rcls, prob in preds:
@@ -124,6 +146,7 @@ def test_articles(nlp, linker, rranger):
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.DEBUG)
 
-    from experiments.ontology.linker import TrieEntry  # for linker.load --- todo: make import unnecessary
+    #  for linker.load --- todo: make import unnecessary
+    from experiments.ontology.linker import TrieEntry
 
     main2()
