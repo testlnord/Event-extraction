@@ -60,6 +60,7 @@ def preprocess(input_path, output_path):
         print('TOTAL: {}'.format(total))
 
 
+# Process benchmark data
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 

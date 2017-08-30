@@ -180,47 +180,10 @@ class DBPediaEncoder:
         return (np.array(cls),)  # packing to tuple to be consistent with unpacking in encode() todo: remove
 
     def encode(self, crecord):
-        # s_span, o_span = crecord2spans_old(crecord, self.nlp)
-        s_span, o_span = crecord2spans(crecord, self.nlp, self.ntr)  # todo: test for RelRecord
+        s_span, o_span = crecord2spans(crecord, self.nlp, self.ntr)
         data = self.encode_data(s_span, o_span)
         cls = self.encode_class(crecord)
         return (*data, *cls)
-
-
-class DBPediaEncoderWithEntTypes(DBPediaEncoder):
-    def __init__(self, nlp, superclass_map, inverse_relations=None,
-                 expand_context=1, expand_noun_chunks=False,
-                 ner_type_resolver=NERTypeResolver()):
-        super().__init__(nlp, superclass_map, inverse_relations, expand_context, expand_noun_chunks)
-        self._ner_type_resolver = ner_type_resolver
-        raw_ent_tags = list(sorted(set(ner_type_resolver.final_classes_names.values())))  # same as symbols.ENT_CLASSES
-        self._ent_tags = CategoricalTags(raw_ent_tags, default_tag='')
-        # self._ent_tags = self.ner_tags
-        assert all(cls in self._ent_tags.raw_tags for cls in ner_type_resolver.final_classes_names.values())
-
-    def _encode_type(self, uri):
-        return self._ent_tags.encode(self._ner_type_resolver.get_by_uri(uri))
-
-    @property
-    def vector_length(self):
-        _vl = super().vector_length
-        _vl[-1] = len(self._ent_tags)
-        return _vl
-
-    def encode(self, crecord):
-        s_span, o_span = crecord2spans_old(crecord, self.nlp)
-        # Do not use data linking made in overloaded encode_data (hence, super()), use info from crecord instead
-        data = super().encode_data(s_span, o_span)
-        cls = self.encode_class(crecord)
-
-        if data and cls:
-            s_type = self._encode_type(crecord.subject)
-            o_type = self._encode_type(crecord.object)
-            s_type_out = np.array(self._encode_ent_position(s_span, s_type, np.zeros_like(s_type)))
-            o_type_out = np.array(self._encode_ent_position(o_span, o_type, np.zeros_like(o_type)))
-
-            # Cut the last channel of 'data' as we overwrite it
-            yield (*data[:-1], s_type_out + o_type_out, *cls)
 
 
 class DBPediaEncoderEmbed(DBPediaEncoder):
@@ -232,6 +195,8 @@ class DBPediaEncoderEmbed(DBPediaEncoder):
         :return: encoded data (tuple of arrays)
         """
         sdp = self._encode_sdp(s_span, o_span)
+        # todo: temporary to try returning full sentences
+        # self.last_sdp = sdp = s_span.sent
 
         _iob_tags = []
         _ner_tags = []
@@ -255,22 +220,12 @@ class DBPediaEncoderEmbed(DBPediaEncoder):
         data = _iob_tags, _ner_tags, _pos_tags, _dep_tags, _wn_hypernyms, _vectors, s_type_out + o_type_out
         return tuple(map(np.array, data))
 
-    # @property
-    # def embedding_channels(self):
-    #     """Channels supposed to be embedded"""
-    #     return list(range(self.channels[:-2]))
-
 
 class DBPediaEncoderBranched(DBPediaEncoderEmbed):
     @property
     def vector_length(self):
         _vl = super().vector_length
         return (*_vl, *_vl)
-
-    # @property
-    # def embedding_channels(self):
-    #     _ch = super().embedding_channels
-    #     return (*_ch, *_ch)
 
     def encode_data(self, s_span, o_span):
         data = super().encode_data(s_span, o_span)
@@ -281,46 +236,4 @@ class DBPediaEncoderBranched(DBPediaEncoderEmbed):
         left_parts = [d[:i+1] for d in data]
         right_parts = [d[i:] for d in data]
         return left_parts + right_parts
-
-
-if __name__ == "__main__":
-    import os
-    import spacy
-    from experiments.ontology.tagger import load_golden_data
-    from experiments.ontology.data import load_rc_data, filter_context
-    from experiments.ontology.data_structs import RelationRecord, RelRecord
-    from experiments.data_utils import unpickle
-    from experiments.ontology.symbols import RC_CLASSES_MAP, RC_CLASSES_MAP_ALL, RC_INVERSE_MAP
-    from experiments.ontology.config import config, load_nlp
-
-    log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
-
-    # nlp = load_nlp()
-    model_dir = 'models.v5.4.i5.epoch2'
-    nlp = load_nlp(model_dir)
-
-    sclasses = RC_CLASSES_MAP_ALL
-    inverse = RC_INVERSE_MAP
-    encoder = DBPediaEncoderWithEntTypes(nlp, sclasses, inverse_relations=inverse)
-
-    rc_dir = config['data']['rc_dir']
-    rc_out = os.path.join(rc_dir, 'rrecords.v2.filtered.pck')
-    rc0_out = os.path.join(rc_dir, 'rrecords.v2.negative.pck')
-    # dataset = load_rc_data(sclasses, rc_out, rc0_out, neg_ratio=0., shuffle=False)
-    # print('total with filtered classes:', len(dataset))
-
-    dataset = list(unpickle(rc_out))
-    _valid = [rr for rr in dataset if rr.valid_offsets]
-    _fc = list(filter(None, map(filter_context, _valid)))
-    print('TOTAL:', len(dataset))
-    print('VALID:', len(_valid))
-    print('(BAD:', len(dataset) - len(_valid), ')')
-    print('VALID FILTERED:', len(_fc))
-    # input('press enter to proceed...')
-
-    bad = 0
-    ntr = NERTypeResolver()
-    for i, record in enumerate(_fc):
-        print(i)
-        s_span, o_span = crecord2spans(record, nlp, ntr)
 

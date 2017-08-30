@@ -125,32 +125,27 @@ def main():
     nlp = spacy.load('en_core_web_md')
 
     ner_dir = config['data']['ner_dir']
-    dataset_file = os.path.join(ner_dir, 'crecords.v2.pck')
+    dataset_file = os.path.join(ner_dir, 'crecords.v3.pck')
     # dataset = list(islice(unpickle(dataset_file), 100))
     dataset = list(unpickle(dataset_file))
     dataset = list(transform_ner_dataset(nlp, dataset,
-                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=1))
+                                         allowed_ent_types=ALL_ENT_CLASSES, min_ents=2))
     random.shuffle(dataset)
     tr_data, ts_data = split(dataset, (0.8, 0.2))
     log.info('#train: {}; #test: {}'.format(len(tr_data), len(ts_data)))
 
-    epochs = 4
+    epochs = 2
     epoch_size = 5
     start_epoch = 1  # for proper model saving when continuing training
-    lrs = [0.003, 0.001, 0.0003, 0.0001]
+    lrs = [0.001, 0.0003, 0.0001]
     lrs.extend(lrs[-1:] * epochs)  # repeat last learn rate
     save_every = 1
 
-    nlp2 = nlp  # loading plain spacy model
-    # model_dir = 'models.v5.4.i{}.epoch{}'.format(5, 2)
-    # nlp2 = spacy.load('en', path=model_dir)  # continuing training
-    # log.info('iter 0: base test: TEST DATA {}'.format(model_dir))
+    nlp2 = nlp  # loading plain spacy model to train it on our classes
     ts_trues, ts_preds = get_preds(nlp2, ts_data, print_=False)
     test_look(ts_trues, ts_preds)
 
-    # nlp.entity = EntityRecognizer(_nlp.vocab, entity_types=ALL_ENT_CLASSES)  # train new one from scratch
-
-    # Add unknown entity types
+    # Add yet unknown entity types
     for ent_type in NEW_ENT_CLASSES:
         nlp2.entity.add_label(ent_type)
 
@@ -166,7 +161,7 @@ def main():
         # This step averages the model's weights. This may or may not be good for your situation --- it's empirical.
         # nlp2.end_training()
 
-        this_model = 'models.cls.v7.3.i{}.epoch{}'.format(epoch_size, epoch)
+        this_model = 'models.cls.v8.1.i{}.epoch{}'.format(epoch_size, epoch)
         if epoch % save_every == 0:
             save_model(nlp2, this_model, vectors_symlink=False)
             print('saved "{}"'.format(this_model))

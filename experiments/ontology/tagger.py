@@ -248,14 +248,6 @@ def tag_crecords(output_dir, num_cut=None):
     tagger.run(dataset)
     # tagger.continue_tagging()
 
-    # transition from previous tagger version
-    # with open(os.path.join(output_dir, 'processed.json')) as f:
-    #     state, processed = json.load(f)
-    # for i, item in enumerate(processed):
-    #     if item is None:
-    #         processed[i] = 'None'
-    # tagger.run(dataset, processed, state)
-
 
 def raw(uri):
     return uri.rsplit('/', 1)[-1]
@@ -279,12 +271,16 @@ def main(output_dir):
 
 
 if __name__ == "__main__":
+    # For normal running from the shell
     cdir = os.path.join(os.path.dirname(__file__), '..', '..')
     sys.path.append(cdir)
+
+    from experiments.ontology.config import config
     from experiments.ontology.data_structs import RelationRecord  # for unpickling
 
     num_cut = 500
-    golden_dir = '/home/user/datasets/dbpedia/rc/golden{}/'.format(num_cut)
+    rc_dir = config['data']['dir']
+    golden_dir = os.path.join(rc_dir, 'golden{}'.format(num_cut))
     tag_crecords(golden_dir, num_cut)
 
     # output_dir = '/home/user/datasets/dbpedia/rc/test_tagger'

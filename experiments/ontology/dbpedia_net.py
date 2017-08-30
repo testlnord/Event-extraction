@@ -11,67 +11,6 @@ from experiments.sequencenet import SequenceNet
 
 
 class DBPediaNet(SequenceNet):
-    def get_model2old(self, dr=0.5, rdr=0.5):
-        input_lens = self._encoder.vector_length
-        min_units=16
-        max_units = 128
-
-        inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
-        # Add embedding if the input length is too large
-        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
-                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
-        # Make more units for smaller channels and cut too large channels
-        xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
-
-        # todo: add inputs from previous final_dense to next layer's lstm?
-        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
-        lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
-        lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
-
-        all_lstms = [lstms1, lstms2, lstms3]
-        all_aux_lstms = [[LSTM(xlen, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm, xlen in zip(lstms, xlens)] for lstms in all_lstms]
-
-        # todo: add dropout to dense?
-        auxs = [Concatenate()(aux_lstms) for aux_lstms in all_aux_lstms]
-
-        return inputs, auxs
-
-    def get_model2(self, dr=0.5, rdr=0.5):
-        input_lens = self._encoder.vector_length
-        min_units = 32
-        # max_units = 128
-        max_units = 9999
-
-        inputs = [Input(shape=(None, ilen)) for ilen in input_lens]
-        # Add embedding if the input length is too large
-        embedded = [TimeDistributed(Dense(max_units, activation='sigmoid'))(inputs[i])
-                    if input_lens[i] > max_units else inputs[i] for i in range(len(inputs))]
-        # Make more units for smaller channels and cut too large channels
-        xlens = [max(min_units, min(max_units, xlen)) for xlen in input_lens]
-        total_units = sum(xlens)
-
-        lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(embedded, xlens)]
-        lstms2 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm1) for lstm1, xlen in zip(lstms1, xlens)]
-        lstms3 = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(lstm2) for lstm2, xlen in zip(lstms2, xlens)]
-
-        aux_lstms = [Concatenate()(lstms) for lstms in [lstms1, lstms2, lstms3]]
-        # aux_lstms = [MaxPooling1D(pool_size=2)(mlstm) for mlstm in aux_lstms]
-        aux_lstms = [LSTM(total_units, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(lstm) for lstm in aux_lstms]
-        # aux_lstms = [MaxPooling1D(pool_size=2)(lstm) for lstm in aux_lstms]
-
-        return inputs, aux_lstms
-
-    def compile2(self, aux_dense_units=256, dr=0.5, rdr=0.5):
-        inputs, lasts = self.get_model2(dr, rdr)
-
-        lasts = [Dense(aux_dense_units, activation='sigmoid')(l) for l in lasts]
-        last = Concatenate()(lasts)
-        last = Dropout(rate=dr)(last)
-        output = Dense(self.nbclasses, activation='softmax', name='output')(last)
-
-        self._model = Model(inputs=inputs, outputs=[output])
-        self._model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
-
     def compile3(self, dr=0.5, rdr=0.5):
         input_lens = self._encoder.vector_length
         min_units = 32
@@ -85,13 +24,8 @@ class DBPediaNet(SequenceNet):
         # Original compile3
         lstms1 = [LSTM(xlen, return_sequences=True)(input) for input, xlen in zip(inputs, xlens)]
         mlstm1 = Concatenate()(lstms1)
-        # compile3.v2 -- not good?
-        # embedded = Concatenate()(embedded)
-        # mlstm1 = LSTM(total_units, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(embedded)
 
         mlstm2 = LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(mlstm1)
-        # mlstm2 = Bidirectional(LSTM(total_units // 2, return_sequences=True, dropout=dr, recurrent_dropout=rdr))(mlstm1)
-        # mlstm3 = LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr)(mlstm2)
         mlstm3 = Bidirectional(LSTM(total_units // 2, return_sequences=False, dropout=dr, recurrent_dropout=rdr))(mlstm2)
 
         last = mlstm3
@@ -103,10 +37,8 @@ class DBPediaNet(SequenceNet):
 
     def get_model3(self, input_lens, dr=0., rdr=0., reversed_inputs=False, lstm_layers=2):
         embed_size = 50
-        # echannels = set(self._encoder.embedding_channels)
-        echannels = list(range(len(input_lens) - 2))
+        echannels = list(range(len(input_lens) - 2))  # knowledge of encoder output format used
 
-        # todo: embedding for word vectors and preloading of spacy word vectors
         inputs = [Input(shape=(None, ), dtype='int32') if i in echannels else
                   Input(shape=(None, ilen)) for i, ilen in enumerate(input_lens)]
 
@@ -120,7 +52,6 @@ class DBPediaNet(SequenceNet):
             xlens = list(reversed(xlens))
 
         for i in range(lstm_layers):
-            # nexts = [LSTM(xlen, return_sequences=True)(l) for xlen, l in zip(xlens, nexts)]
             nexts = [LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr)(l) for xlen, l in zip(xlens, nexts)]
             # nexts = [Bidirectional(LSTM(xlen, return_sequences=True, dropout=dr, recurrent_dropout=rdr))(l) for xlen, l in zip(xlens, nexts)]
 
@@ -135,7 +66,6 @@ class DBPediaNet(SequenceNet):
         c = len(input_lens) // 2  # splitting evenly, as branches are identical in their features
         left_lens, right_lens = input_lens[:c], input_lens[c:]  # see EncoderBranched.vector_length
 
-        # todo: try non-reversed
         linputs, lefts = self.get_model3(left_lens, dr, rdr)
         rinputs, rights = self.get_model3(right_lens, dr, rdr, reversed_inputs=True)
 
@@ -201,4 +131,3 @@ class DBPediaNet(SequenceNet):
             tops = list(zip(top_inds, probs, classes))
             all_tops.append(tops)
         return all_tops
-        # return all_tops if topn > 1 else sum(all_tops, [])  # remove extra dimension

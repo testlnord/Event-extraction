@@ -1,12 +1,10 @@
 import logging as log
-import os
 from math import floor
 import pickle
 from collections import defaultdict, namedtuple
-from itertools import permutations, chain, zip_longest, product
+from itertools import permutations, chain, zip_longest
 
 from multiprocessing import Pool
-from concurrent.futures import ProcessPoolExecutor
 
 import spacy
 from rdflib import URIRef, Literal
@@ -16,10 +14,9 @@ from cytoolz import groupby, first, second
 from fuzzywuzzy import fuzz
 import networkx as nx
 
+from experiments.ontology.config import config, load_nlp
 from experiments.ontology.symbols import ENT_CLASSES, ENT_MAPPING
 from experiments.ontology.sub_ont import *
-# from experiments.ontology.sub_ont import get_label, get_fellow_disambiguations, get_fellow_redirects, dbo, gdbo, \
-    # get_type, get_superclass, raw, raw_d, gdb
 
 
 class NERTypeResolver:
@@ -62,6 +59,9 @@ class NERTypeResolver:
 TrieEntry = namedtuple('TrieEntry', ['uri', 'sf', 'ent_type'])
 
 
+# todo: remember about consistency between ENT_CLASSES, that nlp classes and Trie stored classes
+
+
 class NERLinker:
     """
     Disambiguates named entities and stores new unknown if they satisfy type restrictions.
@@ -76,7 +76,7 @@ class NERLinker:
         self._strict_type_match = strict_type_match
         self._allowed_types = ENT_CLASSES
 
-        self.predicate_namespace = dbo  # todo: parametrize
+        self.predicate_namespace = dbo  # todo: move to constructor args
         self.outer_graph = outer_graph
         self.cache = dict()
 
@@ -135,7 +135,6 @@ class NERLinker:
         ont_graph = self.outer_graph
         ns = self.predicate_namespace
 
-        # objs = list(ont_graph.objects(subject=uri, predicate=None))
         objs = {obj for rel, obj in ont_graph.predicate_objects(subject=uri)
                 if rel.startswith(ns) and not isinstance(obj, Literal)}
         subjs = {subj for subj, rel in ont_graph.subject_predicates(object=uri)
@@ -146,6 +145,12 @@ class NERLinker:
         return new_nodes, new_edges
 
     def get_path_graph(self, uris, depth=2):
+        """
+        Based on the paper: https://arxiv.org/pdf/1707.05288.pdf
+        :param uris: uris to build graph for
+        :param depth: depth of the paths to search
+        :return:
+        """
         edges = set()
         nodes = set(uris)
         log.info('linker: started building subgraph on {} nodes with depth {}'.format(len(nodes), depth))
@@ -167,7 +172,6 @@ class NERLinker:
         graph.add_nodes_from(uris)  # need only original entities
         graph.add_edges_from(edges)
 
-        # todo: is it needed? maybe return the full graph for HITS algo...
         subgraph = nx.transitive_closure(graph).subgraph(nbunch=uris)
         log.info('linker: ended extracting subgraph: {} edges'.format(len(subgraph.edges())))
 
@@ -186,7 +190,6 @@ class NERLinker:
         candidates = defaultdict(list)
         for cand_uri, ent in all_candidates:
             candidates[cand_uri].append(ent)
-        # candidates = {cand.uri: ent for ent in ents for cand in self.get_candidates(ent)}
 
         # Build subgraph for these candidates
         graph = self.get_path_graph(candidates, depth=depth)
@@ -196,7 +199,7 @@ class NERLinker:
         authorities = sorted(authorities.items(), key=second, reverse=True)
 
         # todo: what to do with equally probable authorities? or with 'zero' authorities?
-        #   -somehow preserve initial sort by get_candidates()? or returned weights (if any)
+        #   maybe somehow preserve initial sort by get_candidates()? or returned weights (if any)
         for uri, auth_value in authorities:
             ents = candidates.get(uri, list())
             for ent in ents:
@@ -206,17 +209,7 @@ class NERLinker:
 
     def __call__(self, doc):
         answer_lists = {ent: self.get_candidates(ent) for ent in doc.ents}
-        # todo: if needed, differentiate here between resolved and unknown entities
         self.cache.update({ent: [str(entry.uri) for entry in answers] for ent, answers in answer_lists.items()})
-
-        # Resolve all entities:
-        #   get types, (and flag whether type the same?), get confidence score
-        # !Is there any possibility to get type-guess or confidence to unknown entities?
-        #   somehow remember new entities as candidates, dump them somewhere
-        # Remember resolved somehow, link with Doc somehow
-        # Get resolved with different from spacy.ents types
-        # Merge them giving appropriate priority (use confidence, etc.)
-        # Set doc.ents
 
         return doc
 
@@ -248,7 +241,7 @@ class NERLinker:
                 candidate_sets = _trie.itervalues(prefix=lprefix)
                 candidates = list(chain.from_iterable(candidate_sets))
 
-                # todo: it is temporary for keeping consistency with saved in trie old type schema
+                # todo: it is temporary for keeping consistency with saved in trie old entity type schema
                 tmap = ENT_MAPPING
                 typed = groupby(lambda e: (tmap.get(e.ent_type) or e.ent_type) == span.label_, candidates)
                 # typed = groupby(lambda entry: entry.ent_type == span.label_, candidates)
@@ -327,34 +320,6 @@ def from_crecords(crecords):
                     yield ent.uri, surface_form
 
 
-def test_pools():
-    from multiprocessing import Pool
-    from time import process_time, perf_counter
-
-    from experiments.ontology.sub_ont import gf
-
-    ntr = NERTypeResolver()
-    uris = list(gf.subjects(dbo.product))
-    print(len(uris), uris)
-
-    # workers = [64, 128, 256, 512]
-    # for wk in workers:
-    #     tstart = perf_counter()
-    #     with ThreadPoolExecutor(max_workers=wk) as pool:
-    #         ent_types = pool.map(ntr.get_by_uri, uris)
-    #     tend = perf_counter()
-    #     print('elapsed thread-pool({}): {}'.format(wk, tend - tstart))
-
-    workers = [8, 16]
-
-    for wk in workers:
-        tstart = perf_counter()
-        with ProcessPoolExecutor(max_workers=wk) as pool:
-            ent_types = pool.map(ntr.get_by_uri, uris)
-        tend = perf_counter()
-        print('elapsed pool({}): {}'.format(wk, tend - tstart))
-
-
 def build_linker(linker, model_dir):
     from experiments.ontology.sub_ont import gf, gfall, dbr
     from experiments.data_utils import unpickle
@@ -362,9 +327,6 @@ def build_linker(linker, model_dir):
     dataset_file = 'crecords.v2.pck'
     crecords = list(unpickle(dataset_dir + dataset_file))
     data1 = set(from_crecords(crecords))
-    # for i, (ent_uri, sf) in enumerate(data1, 1):
-    #     print(i, str(ent_uri).ljust(80), str(sf))
-    # exit()
 
     graph = gfall
     data2 = list(from_graph(graph))
@@ -374,30 +336,6 @@ def build_linker(linker, model_dir):
         linker.update(data)
         linker.save(model_dir)
     test_linker_trie(linker)
-    # linker.load(model_dir)
-    # test_linker_trie(linker)
-
-
-def try_trie():
-    from experiments.ontology.sub_ont import gf, gfall, dbr
-
-    base_dir = '/home/user/'
-    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
-    model_dir = os.path.join(project_dir, 'experiments', 'models')
-
-    ntr = NERTypeResolver()
-    linker = NERLinker(ner_type_resolver=ntr)
-
-    # subjs = list(gfall.subjects(dbr.Microsoft))
-    subjs = [dbr.Alien, dbr.Microsoft, dbr.JetBrains, dbr.Google]
-    data = list(zip_longest(subjs, []))
-    # data = list(from_graph(gfall))
-
-    print('total entities: {}'.format(len(data)))
-    linker.update(data)
-    print('total entities: {}'.format(len(data)))
-    test_linker_trie(linker)
-    linker.save(model_dir)
 
 
 def test_linker_trie(linker):
@@ -412,13 +350,7 @@ def test_linker_trie(linker):
 
 
 def test_linker(linker):
-    # model_dir = '/home/user/projects/Event-extraction/experiments/ontology'
-    # model_name = 'models.v5.4.i{}.epoch{}'.format(1, 8)
-    # model_name = 'models.v5.4.i{}.epoch{}'.format(5, 2)
-    # model_path = os.path.join(model_dir, model_name)
-    # nlp = spacy.load('en', path=model_path)
-    nlp = spacy.load(**config['models']['nlp'])
-    # todo: remember about consistency between ENT_CLASSES, that nlp classes and Trie stored classes
+    nlp = load_nlp()
 
     titles = [dbr.JetBrains, dbr.Microsoft_Windows]
     for i, title in enumerate(titles):
@@ -427,8 +359,9 @@ def test_linker(linker):
         article = get_article(title)
         doc = nlp(article['text'])
 
+        # Change (uncomment) the needed test method
         # test_get_candidates(linker, doc)
-        test_link(linker, doc)
+        # test_link(linker, doc)
 
 
 def test_link(linker, doc):
@@ -454,25 +387,17 @@ def test_get_candidates(linker, doc):
         entries = linker.get_candidates(ent)
         uris_str = '; '.join([raw(entry.uri) for entry in entries if entry])
         print('({}:{}) ({}) <{}> is [{}]'.format(ent.start, ent.end, ent.label_, ent.text, uris_str))
-        # print('({}:{}) ({}) <{}> is <{}>'.format(ent.start, ent.end, ent.label_, ent.text, str(uri)))
 
 
 if __name__ == "__main__":
     from experiments.ontology.data_structs import ContextRecord, EntityRecord  # for unpickle()
-    # from experiments.ontology.config import config
     from experiments.ontology.symbols import ENT_CLASSES
-    # from experiments.ontology.sub_ont import get_article, dbr
     from experiments.nlp_utils import sentences_ents
+    from experiments.ontology.config import config
 
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
 
-    # print(list(sorted(set(NERTypeResolver.final_classes_names.values()))))
-    # print(list(sorted(set(ENT_CLASSES))))
-    # exit()
-
-    base_dir = '/home/user/'
-    project_dir = os.path.join(base_dir, 'projects', 'Event-extraction')
-    model_dir = os.path.join(project_dir, 'experiments', 'models')
+    model_dir = config['models']['dir']
     assert os.path.isdir(model_dir)
 
     ntr = NERTypeResolver()
@@ -483,5 +408,3 @@ if __name__ == "__main__":
     linker.load(model_dir)
     test_linker(linker)
 
-    # test_pools()
-    # try_trie()

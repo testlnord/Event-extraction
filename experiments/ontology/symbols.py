@@ -172,7 +172,7 @@ RC_CLASSES_MAP = {
     'http://dbpedia.org/ontology/author': 'author',
     'http://dbpedia.org/ontology/publisher': 'author',
     'http://dbpedia.org/ontology/distributor': 'author',
-    'http://dbpedia.org/ontology/knownFor': 'knownFor',
+    'http://dbpedia.org/ontology/knownFor': 'knownFor',  # bad class
     'http://dbpedia.org/ontology/product': 'product',
     'http://dbpedia.org/ontology/computingPlatform': 'computingPlatform',
     'http://dbpedia.org/ontology/keyPerson': 'keyActor',
@@ -204,8 +204,68 @@ RC_CLASSES = set(RC_CLASSES_MAP.values())
 RC_CLASSES_ALL = set(RC_CLASSES_MAP_ALL.values())
 
 
+# Different class schema
+RC_CLASSES_MAP_ALL2 = {
+    'http://dbpedia.org/ontology/developer': 'author',
+    'http://dbpedia.org/ontology/designer': 'author',
+    'http://dbpedia.org/ontology/author': 'author',
+    'http://dbpedia.org/ontology/creator': 'author',
+    'http://dbpedia.org/ontology/publisher': 'author',
+    'http://dbpedia.org/ontology/distributor': 'author',
+    # 'http://dbpedia.org/ontology/knownFor': 'knownFor',
+    'http://dbpedia.org/ontology/product': 'product',
+    'http://dbpedia.org/ontology/computingPlatform': 'computingPlatform',
+    'http://dbpedia.org/ontology/location': 'location',
+    'http://dbpedia.org/ontology/locationCity': 'location',
+    'http://dbpedia.org/ontology/locationCountry': 'location',
+    'http://dbpedia.org/ontology/foundationPlace': 'location',
+
+    # 'http://dbpedia.org/ontology/keyPerson': 'keyPerson',
+    'http://dbpedia.org/ontology/foundedBy': 'founder',
+    'http://dbpedia.org/ontology/founder': 'founder',
+    'http://dbpedia.org/ontology/owner': 'owner',
+    'http://dbpedia.org/ontology/parentCompany': 'owner',
+    'http://dbpedia.org/ontology/owningCompany': 'owner',
+    'http://dbpedia.org/ontology/subsidiary': 'childEntity',
+    'http://dbpedia.org/ontology/division': 'childEntity',
+    'http://dbpedia.org/ontology/predecessor': 'predecessor',
+    'http://dbpedia.org/ontology/successor': 'successor',
+}
+
+
+# Different class schema
+RC_CLASSES_MAP_ALL3 = {
+    'http://dbpedia.org/ontology/developer': 'author',
+    'http://dbpedia.org/ontology/designer': 'author',
+    'http://dbpedia.org/ontology/author': 'author',
+    'http://dbpedia.org/ontology/creator': 'author',
+    'http://dbpedia.org/ontology/publisher': 'author',
+    'http://dbpedia.org/ontology/distributor': 'author',
+    # 'http://dbpedia.org/ontology/knownFor': 'knownFor',
+    'http://dbpedia.org/ontology/product': 'product',
+    'http://dbpedia.org/ontology/computingPlatform': 'computingPlatform',
+    'http://dbpedia.org/ontology/location': 'location',
+    'http://dbpedia.org/ontology/locationCity': 'location',
+    'http://dbpedia.org/ontology/locationCountry': 'location',
+    'http://dbpedia.org/ontology/foundationPlace': 'location',
+
+    # 'http://dbpedia.org/ontology/keyPerson': 'keyPerson',
+    # 'http://dbpedia.org/ontology/foundedBy': 'founder',
+    # 'http://dbpedia.org/ontology/founder': 'founder',
+    # 'http://dbpedia.org/ontology/owner': 'owner',
+    # 'http://dbpedia.org/ontology/parentCompany': 'owner',
+    # 'http://dbpedia.org/ontology/owningCompany': 'owner',
+    # 'http://dbpedia.org/ontology/subsidiary': 'childEntity',
+    # 'http://dbpedia.org/ontology/division': 'childEntity',
+    # 'http://dbpedia.org/ontology/predecessor': 'predecessor',
+    # 'http://dbpedia.org/ontology/successor': 'successor',
+}
+
+
 # keyActor and parentEntity are similar sometimes
 RC_INVERSE_MAP = {
+    'successor': 'predecessor',
+    'predecessor': 'successor',
     'childEntity': 'parentEntity',
     'parentEntity': 'childEntity',
     'author': 'product',
@@ -229,19 +289,6 @@ SEMEVAL_CLASSES = {
 
 
 SEMEVAL_CLASSES_MAP = {c: c for c in SEMEVAL_CLASSES}
-
-
-SEMEVAL_CLASSES_MAPPED = {
-    # "Cause-Effect": "",
-    "Entity-Origin": "location",
-    # "Message-Topic": "",
-    "Product-Producer": "author",
-    # "Entity-Destination": "",
-    # "Member-Collection": "",
-    # "Instrument-Agency": "",
-    "Component-Whole": "parentEntity",
-    # "Content-Container": "",
-}
 
 
 KBP37_CLASSES = {
@@ -268,29 +315,6 @@ KBP37_CLASSES = {
 
 
 KBP37_CLASSES_MAP = {c: c for c in KBP37_CLASSES}
-
-
-KBP37_CLASSES_MAPPED = {
-    # "per:alternate names",
-    # "per:origin",
-    # "per:spouse",
-    # "per:title",
-    # "per:employee of": "",  # todo: inverse to keyActor
-    # "per:countries of residence",
-    # "per:stateorprovinces of residence",
-    # "per:cities of residence",
-    # "per:country of birth",
-    # "org:alternate names",
-    "org:subsidiaries": "childEntity",
-    "org:top members/employees": "keyActor",
-    "org:founded": "keyActor",
-    "org:founded by": "keyActor",
-    "org:country of headquarters": "location",
-    "org:stateorprovince of headquarters": "location",
-    "org:city of headquarters": "location",
-    # "org:members": "",
-    # "no relation": None,
-}
 
 
 WORDNET_HYPERNYM_CLASSES = {

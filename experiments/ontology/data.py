@@ -8,12 +8,13 @@ from copy import copy
 from itertools import permutations, islice
 from multiprocessing import Pool
 
-from rdflib.term import Literal
+from rdflib.term import Literal, URIRef
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
 from cytoolz import groupby
 
+from experiments.ontology.symbols import RC_CLASSES_MAP_ALL
 from experiments.data_utils import unpickle
 from experiments.nlp_utils import merge_ents_offsets, sentences_ents
 from experiments.ontology.data_structs import RelationRecord, EntityRecord, ContextRecord, EntityMention
@@ -202,10 +203,11 @@ def run_extraction(nlp, inner_graph, outer_graph, subject_uris, use_all_articles
             for article, doc in zip(articles, docs):
                 # Resolving entities from the whole 'world' (outer_graph)
                 ents_article = list(resolve_entities(article['links'], graph=outer_graph))
+                ents_all = ents_article
+                # The following lines determines: search the candidates or just user article['links']
                 # candidates = set(ent.uri for ent in ents_article).union(objects)
                 # ents_found = next(get_contexts([doc], *candidates))
                 # ents_all = merge_ents_offsets(ents_article, ents_found)
-                ents_all = ents_article
 
                 if len(ents_all) > 0:
                     yield article['id'], doc, ents_all
@@ -224,16 +226,16 @@ def make_dataset(nlp, ner_outfile, rc_outfile, rc_other_outfile, rc_no_outfile, 
     total_rels_filtered = 0
     total_ents = 0
     try:
-        from rdflib.term import URIRef
-        from experiments.ontology.symbols import RC_CLASSES_MAP_ALL
+        # v2 of dataset: extracting using all subjects in inner graph
+        # subject_uris = set(inner_graph.subjects())
+
+        # v3 of dataset: extracting by the set of relation classes
         allowed_classes = RC_CLASSES_MAP_ALL  # get all relevant relation uris
         subject_uris = {subj for rcls in allowed_classes for subj in outer_graph.subjects(predicate=URIRef(rcls))}
 
-        # subject_uris = set(inner_graph.subjects())
-
-        # NB: using outer_graph for the search of objects for subject_uris!
-        graph = outer_graph
-        # graph = inner_graph
+        # NB: using outer_graph for the search of objects for subject_uris! see run_extraction for details...
+        # graph = outer_graph
+        graph = inner_graph
 
         for art_id, doc, ents in run_extraction(nlp, graph, outer_graph, subject_uris, use_all_articles=False):
             cr = ContextRecord(doc.text, 0, len(doc.text), art_id, ents=None)
@@ -268,6 +270,7 @@ def transform_ner_dataset(nlp, crecords, allowed_ent_types, ner_type_resolver=NE
                           min_ents=0, min_ents_ratio=0., n_threads=8, batch_size=1000):
     """
     Transform dataset from ContextRecord-s format to spacy-friendly format (json), merging spacy entity types with ours.
+    Data is yielded in sentences -- whole docs are splitted on sentences.
     Data is yielded if both conditions (min_ents or min_ents_ration) are satisfied.
     By default all data is yielded (even if there're no entities).
     :param nlp: spacy.lang.Language
@@ -332,7 +335,7 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
 
         ents = ents_all  # to test all
         # ents = ents_found  # to test found
-        # ents = ents_article  # to test only article's native ents
+        # ents = ents_article  # to test only article's native ents (article['links'])
 
         total_local = 0
         for j, rrel in enumerate(resolve_relations(article['id'], doc, ents, graph)):
@@ -344,21 +347,11 @@ def test_resolve_relations(nlp, subject, relation, graph, test_all=False):
         print('total relations locally: {}'.format(total_local))
 
 
-def repickle_rrecords(path):
-    records = list(unpickle(path))
-    with open(path, 'wb') as f:
-        for rr in records:
-            new_record = RelationRecord(rr.subject, rr.relation, rr.object, rr.s0, rr.s1, rr.o0, rr.o1, rr.context, rr.cstart, rr.cend, rr.source_id)
-            pickle.dump(new_record, f)
-
-
 if __name__ == "__main__":
     log.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s', level=log.INFO)
     from experiments.ontology.config import config, load_nlp
     nlp = load_nlp()
 
-    # jbtriples = list(gf.triples((dbr.JetBrains, dbo.product, None)))
-    # mtriples = list(gf.triples((dbr.Microsoft, dbo.product, None)))
     # test_resolve_relations(nlp, subject=dbr.Microsoft, relation=None, graph=gfall)
 
     ner_dir = config['data']['ner_dir']
@@ -368,9 +361,4 @@ if __name__ == "__main__":
     rc0_out = os.path.join(rc_dir, 'rrecords.v3.negative.pck')
     rc2_out = os.path.join(rc_dir, 'rrecords.v3.other.pck')
     # make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
-
-    # rc_paths = [rc_out, rc0_out, rc2_out]
-    # for rc_path in rc_paths:
-    #     repickle_rrecords(rc_path)
-
 
