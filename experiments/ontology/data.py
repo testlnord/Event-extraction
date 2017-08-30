@@ -12,6 +12,7 @@ from rdflib.term import Literal
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed
 from fuzzywuzzy import fuzz
 from intervaltree import IntervalTree
+from cytoolz import groupby
 
 from experiments.data_utils import unpickle
 from experiments.nlp_utils import merge_ents_offsets, sentences_ents
@@ -41,26 +42,53 @@ def filter_context(crecord):
         return cr
 
 
-def load_rc_data(allowed_classes, rc_file, rc_neg_file, neg_ratio=0., shuffle=True, exclude_records=frozenset()):
+def load_rc_data(allowed_classes, rc_file, rc_neg_file, nrecords=None, neg_ratio=0., shuffle=True, exclude_records=frozenset()):
     """
     Load data for relation classification given paths to pickled RelationRecords and make basic filtering.
+    If needed, take only bounded amount of data, leaving out only highly-available classes.
     :param allowed_classes: keep only these relation classes (specified in URI form)
     :param rc_file: path to file with pickled RelationRecords
     :param rc_neg_file: path to file with pickled negative RelationRecords (i.e. no relation)
+    :param nrecords: return at most this humber of data records
     :param neg_ratio: max ratio of #negatives to #positive records (i.e. how much negatives to load)
     :param shuffle: bool, shuffle or not dataset
     :param exclude_records: collection (preferably set-like with fast lookup) of records to filter them out
     :return: List[RelationRecord]
     """
     _classes = set(allowed_classes)
+
+    # Load all available data
     records = []
     for rr in unpickle(rc_file):
-        # Same subject and object sometimes happen
-        if (str(rr.relation) in _classes and rr not in exclude_records
-            and rr.valid_offsets and rr.subject != rr.object):
+        if (str(rr.relation) in _classes
+            and rr not in exclude_records
+            and rr.valid_offsets
+            and rr.subject != rr.object):  # Same subject and object sometimes happen
+
             _fc = filter_context(rr)
             if _fc is not None:
                 records.append(_fc)
+
+    # records = records[:nrecords]  # just cut it without concerns about under-represented classes
+    if nrecords and nrecords < len(records):
+        by_classes = groupby(lambda rr: rr.relation, records)
+        nleft_cls = len(_classes)
+        assert nleft_cls == len(by_classes)
+        nleft = nrecords
+        records = []
+
+        # Sort classes by the number of records in them (it is crucial for correct work of the code below)
+        for rcls, group in sorted(by_classes.items(), key=lambda t: len(t[1])):
+            barrier = nleft // nleft_cls  # how much records we need now
+            if len(group) > barrier:  # choose subset of needed length if there're enough records
+                if shuffle:  # choose random subset if needed
+                    random.shuffle(group)
+                group = group[:barrier]
+
+            records.extend(group)
+            nleft -= len(group)
+            nleft_cls -= 1
+
     nb_neg = int(len(records) * neg_ratio)
     rc_neg_gen = (filter_context(rr) for rr in unpickle(rc_neg_file) if rr.valid_offsets and rr.subject != rr.object)
     rc_neg = islice(filter(None, rc_neg_gen), nb_neg)
@@ -339,7 +367,7 @@ if __name__ == "__main__":
     rc_out = os.path.join(rc_dir, 'rrecords.v3.filtered.pck')
     rc0_out = os.path.join(rc_dir, 'rrecords.v3.negative.pck')
     rc2_out = os.path.join(rc_dir, 'rrecords.v3.other.pck')
-    make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
+    # make_dataset(nlp, ner_out, rc_out, rc2_out, rc0_out, inner_graph=gfall, outer_graph=gdb)
 
     # rc_paths = [rc_out, rc0_out, rc2_out]
     # for rc_path in rc_paths:
