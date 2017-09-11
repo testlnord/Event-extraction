@@ -83,21 +83,5 @@ def print_confusion_matrix(y_true, y_pred, labels, max_print_width=12):
     print(classification_report(y_true=y_true, y_pred=y_pred, labels=labels))
     print('accuracy: {}'.format(accuracy))
 
-    # Print metrics for all classes
-    # for label in labels:
-    #     metrics = cls_results[label]
-    #     print('{}: f1:{f1:.3f} prec:{precision:.3f} recall:{recall:.3f} tp:{tp} fp:{fp} fn:{fn}'
-    #           .format(formatter(label), **metrics))
-
-    # all_metrics = defaultdict(list)
-    # for label, metrics in cls_results.items():
-    #     for metric, value in metrics.items():
-    #         all_metrics[metric].append(value)
-    # macro = {}
-    # for metric, vals in all_metrics.items():
-    #     macro[metric] = sum(vals) / len(vals)
-    # print('macro measures:')
-    # pprint(macro)
-
     np.set_printoptions(**old_opts)  # restore numpy printoptions
     return accuracy, cls_results

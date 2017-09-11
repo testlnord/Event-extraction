@@ -1,0 +1,123 @@
+
+Ontology & data
+    it worths to re-extract the ontology using more files from dbpedia.org rdf files
+        in particular, these things were not used at all:
+            infobox properties ('properties' namespace)
+                but as dbpedia says, 'properties' namespace is less precise than 'ontology' namespace
+            sdtyped ('ontology' namespace)
+            properties with literal types
+                but it is not clear how to process them
+        there're articles which are categories and Lists really
+            example: 'List_of_Microsoft_software'
+            it would be nice to expand them ...somehow 
+    benchmark datasets
+        https://github.com/zhangdongxu/kbp37
+        https://www.cl.cam.ac.uk/~do242/Papers/semeval2multiway.pdf
+
+
+Important things
+    WikiExtractor.py usage
+        WikiExtractor.py <path_to_wiki_xml_dump> --json -o <output_dir> --links -r
+        other options are optional (--sections, for example)
+    ontology/post_wikiextractor.py
+        should be used after WikiExtractor
+        need articles with links left in place (WikiExtractor --links flag), need json format
+        splits article files on separate files
+        extracts the links and saves them in json format alongside with the article
+    ontology/load_rule_sets.py
+        independent script to download inference rules schemas from known sparql endpoints
+        (after downloading they should be loaded to Virtuoso server for usage. google how to do it)
+    requiements.txt
+        need to update them
+
+    ontology/data.py
+        heavy use of post_wikiextractor, see above
+    ontology/dbpedia_net.py
+        papers (some of the more recent reference older papers)
+            https://arxiv.org/pdf/1601.03651.pdf
+            http://or.nsfc.gov.cn/bitstream/00001903-5/152558/1/1000014015566.pdf
+            https://arxiv.org/pdf/1507.04646.pdf
+            https://arxiv.org/pdf/1506.07650.pdf
+    ontology/dbpedia_net_train.py
+        depend on load Relaction Classification classes schema from symbols.py (see it)
+    ontology/deploy.py
+        example of usage with all pipeline built
+        there is one drawback of separating encoder and model classes evident:
+            encoder type and its' params should match the ones used when the model was trained (more precisely, they must be compatible)
+            there's no easy way to know it except remembering or keeping some written records
+    ontology/linker.py
+        paper
+            https://arxiv.org/pdf/1707.05288.pdf
+        linker's built model keep some fixed NER classes schema. it may become outdated if you change the schema
+    ontology/model_tests.py
+        processing of benchmark data. saves in our format (pickle records)
+
+    ontology/sub_ont.py
+        many functions require particular subsets of dbpedia ontology to be loaded in separate subgraphs
+            see code for details, it should be clear
+    ontology/symbols.py
+        spacy classes' schemas (for encoder mainly), our classes schemas
+    ontology/tagger.py
+        script (terminal-based, uses curses) for tagging RelationRecords
+        todo: make it runnable from command line
+
+
+Enhancements & refactorings
+    something like ResourceFinder, central for all models
+        now all models are scattered and loaded manually
+    datasets -- put them all to database maybe
+        now all datasets are scattered and loaded manually
+        now each dataset might has its own format and loading procedure
+            at least all of them in pickle format
+    SequenceNet -- remove it
+        now it is only contains the common code for training keras models and loading them
+        it is old and not very good
+
+
+________________________________________________________________________________
+
+
+Ideas
+    try spacy 2.0 neural network model for (maybe) better NER classification
+    using Virtuoso 8.0 add custom inference rules
+        https://medium.com/virtuoso-blog/virtuoso-8-0-creating-a-custom-inference-rules-using-spin-vocabulary-d7a060f859ef (blog of Virtuoso founder)
+
+
+What to do next
+    try N Relation Classification models with binary output for N classes
+        the crucial thing is about negative class: it should be representative for ALL possible things which may be encounetered in real-world texts... that is, anything.
+    train Relation Classification model with additional class: 'relation present, but of unknown class'
+        it is a variation on the N binary classifiers.
+        there is class 'No relation', but it is not sufficient! models performs bad on real-world data
+
+
+Other
+    old papers
+        https://gabrielstanovsky.github.io/assets/papers/emnlp16a/slides.pdf
+            there is the list of all Open Information Extraction System
+    Max Plank Inst for Informatik has some related systems (OIE, knowledge base, etc.)
+
+
+________________________________________________________________________________
+
+
+Instructions
+    How to run the old version of system (without 'ontology' subdirectory)
+        db
+            install postgresql
+            create database
+            create config.cfg
+            create tables and views
+        corenlp
+            install corenlp server
+            download corenlp models and drop to its' directory
+            install pycorenlp
+            run corenlp server (run_server.py)
+        finally
+            populate primary tables
+                add sources
+                add raw_texts
+            run what you need
+        don't forget to
+            install spacy models
+
