@@ -4,3 +4,6 @@ tmp
 .DS_Store
 
 .idea
+
+experiments/models/*.h5
+*/logs/*
